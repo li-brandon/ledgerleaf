@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { providers, type ProviderEntry, type ProviderKind, type SyncProvider } from '../lib/sync';
+import { CSV_PROVIDER, providers, type ProviderEntry, type ProviderKind, type SyncProvider } from '../lib/sync';
+import CsvImport from './CsvImport';
 import type { Ledger } from '../store';
 
 const KIND_LABEL: Record<ProviderKind, string> = { demo: 'Sample data', file: 'File import', remote: 'Online' };
@@ -10,6 +11,7 @@ export default function Connections({ ledger }: { ledger: Ledger }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [wide, setWide] = useState(false);
   const { lastSync, syncs, accounts, transactions } = ledger.state;
 
   async function run(p: SyncProvider, extra = () => '') {
@@ -28,6 +30,11 @@ export default function Connections({ ledger }: { ledger: Ledger }) {
     }
   }
 
+  function reportImport(error: string | null) {
+    setStatus(error ? { ok: false, text: error } : null);
+    setErrors(({ [CSV_PROVIDER.id]: _, ...rest }) => (error ? { ...rest, [CSV_PROVIDER.id]: error } : rest));
+  }
+
   async function onFile(entry: ProviderEntry, file?: File) {
     if (!file || entry.kind !== 'file') return;
     const p = entry.create(await file.text());
@@ -42,12 +49,15 @@ export default function Connections({ ledger }: { ledger: Ledger }) {
         {providers.list().map((entry) => {
           const synced = syncs?.[entry.id]?.lastSync;
           return (
-            <section className="card" key={entry.id}>
+            <section className={entry.id === CSV_PROVIDER.id && wide ? 'card span-all' : 'card'} key={entry.id}>
               <h3>{entry.name}<span>{KIND_LABEL[entry.kind]}</span></h3>
               {entry.description && <p className="muted">{entry.description}</p>}
               <p className="muted">{synced ? `Last synced ${new Date(synced).toLocaleString()}` : 'Never synced'}</p>
               {errors[entry.id] && <p className="notice error" role="alert">{errors[entry.id]}</p>}
-              {entry.kind === 'file' ? (
+              {entry.id === CSV_PROVIDER.id ? (
+                <CsvImport ledger={ledger} disabled={busy !== null} onResult={reportImport} onOpen={setWide}
+                  onBusy={(b) => setBusy(b ? entry.id : null)} />
+              ) : entry.kind === 'file' ? (
                 <>
                   <label className="btn" aria-disabled={busy !== null}>
                     Choose file

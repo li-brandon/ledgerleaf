@@ -179,6 +179,28 @@ summary { cursor: pointer; color: var(--color-accent); }
 .empty p { max-width: 42ch; margin: 0 auto; }
 .empty .row { justify-content: center; margin-top: var(--space-4); }
 
+/* ---------- CSV import ---------- */
+.grid > .card.span-all { grid-column: 1 / -1; }
+.dropzone { border: 2px dashed var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-sunk); padding: var(--space-6) var(--space-4); text-align: center; transition: border-color .15s, background .15s; }
+.dropzone p { margin: 0 0 var(--space-3); color: var(--color-text-muted); }
+.dropzone.over { border-color: var(--color-accent); background: var(--color-accent-soft); }
+.file-name { margin: 0; }
+.mapping { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4) var(--space-4); margin: var(--space-4) 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr)); gap: var(--space-3) var(--space-4); align-items: end; }
+.mapping legend { font: 600 var(--text-sm) var(--font-sans); padding: 0 var(--space-1); }
+.mapping legend .muted { font-weight: 400; margin-left: var(--space-2); }
+.field { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--text-sm); }
+.field em { font-style: normal; color: var(--color-text-muted); }
+.check { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); grid-column: 1 / -1; }
+.preview { font-size: var(--text-sm); margin-bottom: var(--space-3); }
+.preview td { white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.preview th.mapped, .preview td.mapped { background: var(--color-accent-soft); }
+.preview .role { display: block; text-transform: none; letter-spacing: 0; color: var(--color-accent); font-weight: 600; }
+.import-summary { border-left: 4px solid var(--color-accent); background: var(--color-surface-sunk); border-radius: var(--radius-sm); padding: var(--space-3) var(--space-4); margin-bottom: var(--space-4); }
+.import-summary p { margin: 0 0 var(--space-2); }
+.stats { display: flex; flex-wrap: wrap; gap: var(--space-6); margin: 0 0 var(--space-3); }
+.stats dt { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--color-text-muted); }
+.stats dd { margin: 0; font: 600 var(--text-xl) var(--font-serif); font-variant-numeric: tabular-nums; }
+
 /* ---------- Responsive ---------- */
 @media (max-width: 1100px) {
   :root { --rail-width: 196px; }
