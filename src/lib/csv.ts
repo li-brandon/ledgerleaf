@@ -1,25 +1,30 @@
 import { hashId } from './sync/hash';
 import type { Account, Transaction } from './types';
 
-/** Split CSV text into rows of cells. Handles quoted fields, escaped quotes and CRLF. */
+/**
+ * Split CSV text into rows of cells. Handles quoted fields, escaped quotes and CRLF. A quote
+ * only opens a quoted field at the start of a cell; elsewhere (`12" PIZZA`) it is literal.
+ */
 export function parseCsvRows(text: string): string[][] {
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = '';
   let quoted = false;
+  /** Whether the current cell has begun (a quoted section counts). */
+  let started = false;
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (quoted) {
       if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
       else if (c === '"') quoted = false;
       else cell += c;
-    } else if (c === '"') quoted = true;
-    else if (c === ',') { row.push(cell); cell = ''; }
+    } else if (c === '"' && !started) quoted = started = true;
+    else if (c === ',') { row.push(cell); cell = ''; started = false; }
     else if (c === '\n' || c === '\r') {
       if (c === '\r' && text[i + 1] === '\n') i++;
-      row.push(cell); rows.push(row); row = []; cell = '';
-    } else cell += c;
+      row.push(cell); rows.push(row); row = []; cell = ''; started = false;
+    } else { cell += c; started = true; }
   }
   if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
   return rows.filter((r) => r.some((x) => x.trim() !== ''));

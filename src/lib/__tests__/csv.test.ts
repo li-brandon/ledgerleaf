@@ -14,6 +14,22 @@ describe('parseCsvRows', () => {
       ['2026-01-01', 'line one\nline two'],
     ]);
   });
+  it('keeps a quote inside an unquoted cell literal instead of swallowing the rest of the file', () => {
+    expect(parseCsvRows('date,description,amount\n2026-10-01,JOE\'S 12" PIZZA,-5\n2026-10-02,Coffee,-3\n')).toEqual([
+      ['date', 'description', 'amount'],
+      ['2026-10-01', 'JOE\'S 12" PIZZA', '-5'],
+      ['2026-10-02', 'Coffee', '-3'],
+    ]);
+    expect(parseCsvRows('a,b"c"d,""\n')).toEqual([['a', 'b"c"d', '']]);
+    expect(parseTransactionsCsv('date,description,amount\n2026-10-01,12" SUB,-5\n2026-10-02,Coffee,-3').transactions).toHaveLength(2);
+  });
+  it('ends an unterminated quoted cell at the end of the text', () => {
+    expect(parseCsvRows('a,"b\nc')).toEqual([['a', 'b\nc']]);
+  });
+  it('handles empty cells, trailing commas and a missing final newline', () => {
+    expect(parseCsvRows(',a,\r\nb,,')).toEqual([['', 'a', ''], ['b', '', '']]);
+    expect(parseCsvRows('  \n,,\n')).toEqual([]);
+  });
 });
 
 describe('field parsers', () => {
