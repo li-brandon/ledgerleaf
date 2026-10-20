@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_ROUTE, ROUTES, canonicalHash, isRouteId, parseHash, routeHref, routeLabel } from '../routes';
+import {
+  DEFAULT_ROUTE, ROUTES, canonicalHash, isRouteId, parseHash, parseRoute, routeHref, routeLabel, transactionsHref,
+} from '../routes';
 
 describe('parseHash', () => {
   it('resolves every route from its own href', () => {
@@ -28,7 +30,44 @@ describe('parseHash', () => {
   });
 });
 
+describe('parseRoute', () => {
+  it('reads query parameters for known routes and aliases', () => {
+    expect(parseRoute('#/transactions?account=demo-card')).toEqual({ id: 'transactions', params: { account: 'demo-card' } });
+    expect(parseRoute('#/ledger?account=a%20b&q=')).toEqual({ id: 'transactions', params: { account: 'a b' } });
+    expect(parseRoute('#/accounts')).toEqual({ id: 'accounts', params: {} });
+  });
+
+  it('drops parameters when falling back to the default route', () => {
+    expect(parseRoute('#/nope?account=x')).toEqual({ id: 'overview', params: {} });
+  });
+
+  it('keeps odd keys as plain data', () => {
+    const { params } = parseRoute('#/transactions?__proto__=x');
+    expect(Object.getPrototypeOf(params)).toBe(Object.prototype);
+    expect(Object.keys(params)).toEqual(['__proto__']);
+  });
+});
+
+describe('routeHref', () => {
+  it('encodes parameters and skips empty ones', () => {
+    expect(routeHref('transactions', { account: 'a b&c', q: '' })).toBe('#/transactions?account=a+b%26c');
+    expect(transactionsHref()).toBe('#/transactions');
+    expect(transactionsHref('demo-card')).toBe('#/transactions?account=demo-card');
+  });
+
+  it('round-trips through parseRoute', () => {
+    const href = transactionsHref('acct/1?x=#y');
+    expect(parseRoute(href)).toEqual({ id: 'transactions', params: { account: 'acct/1?x=#y' } });
+  });
+});
+
 describe('canonicalHash', () => {
+  it('keeps query parameters so filtered views survive a reload', () => {
+    expect(canonicalHash('#/transactions?account=demo-card')).toBeNull();
+    expect(canonicalHash('#transactions?account=demo-card')).toBe('#/transactions?account=demo-card');
+    expect(canonicalHash('#/ledger?account=x&empty=')).toBe('#/transactions?account=x');
+  });
+
   it('returns null when the hash is already canonical', () => {
     expect(canonicalHash('#/accounts')).toBeNull();
   });
