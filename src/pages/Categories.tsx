@@ -5,7 +5,7 @@ import { categoryUsage, inUse, type CategoryDraft, type CategoryUsage } from '..
 import {
   countMatches, describeConditions, draftToRule, emptyRuleDraft, newRuleId, previewRules, ruleToDraft, type RuleDraft,
 } from '../lib/rules';
-import type { Category, Rule } from '../lib/types';
+import type { Budget, Category, Rule } from '../lib/types';
 import type { Ledger } from '../store';
 
 /** How many example changes the apply preview lists. */
@@ -120,7 +120,7 @@ function CategoriesCard({ ledger }: { ledger: Ledger }) {
                       </em>
                       {deleting === c.id && (
                         <DeleteCategory
-                          category={c} usage={usage} categories={categories}
+                          category={c} usage={usage} categories={categories} budgets={ledger.state.budgets}
                           onCancel={() => setDeleting(null)}
                           onDelete={(to) => {
                             const error = ledger.deleteCategory(c.id, to);
@@ -202,12 +202,13 @@ interface DeleteCategoryProps {
   category: Category;
   usage: CategoryUsage;
   categories: Category[];
+  budgets: Budget[];
   onCancel(): void;
   onDelete(reassignTo: string): string | undefined;
 }
 
 /** Deleting a category in use: pick where its transactions, budgets and rules go first. */
-function DeleteCategory({ category, usage, categories, onCancel, onDelete }: DeleteCategoryProps) {
+function DeleteCategory({ category, usage, categories, budgets, onCancel, onDelete }: DeleteCategoryProps) {
   const others = categories.filter((c) => c.id !== category.id);
   const [to, setTo] = useState(others.find((c) => c.id === 'other')?.id ?? others[0]?.id ?? '');
   const [error, setError] = useState<string>();
@@ -218,7 +219,7 @@ function DeleteCategory({ category, usage, categories, onCancel, onDelete }: Del
       <p>
         “{category.name}” is used by {usageText(usage)}. Move {usage.transactions + usage.budgets + usage.rules === 1 ? 'it' : 'them'} to
         another category before deleting it.
-        {usage.budgets > 0 && ' Its budgets are dropped if that category already has a budget.'}
+        {usage.budgets > 0 && budgets.some((b) => b.categoryId === to) && ' Its budget is dropped because that category has its own.'}
       </p>
       <div className="row">
         <label className="field">Move to
@@ -480,7 +481,7 @@ function ApplyRules({ ledger }: { ledger: Ledger }) {
               </table>
             </div>
           )}
-          {changes.length > PREVIEW_ROWS && <p className="muted">…and {plural(changes.length - PREVIEW_ROWS, 'more')}.</p>}
+          {changes.length > PREVIEW_ROWS && <p className="muted">…and {(changes.length - PREVIEW_ROWS).toLocaleString('en-US')} more.</p>}
           <div className="row">
             <button type="button" onClick={apply} disabled={!changes.length}>
               Apply to {plural(changes.length, 'transaction')}
