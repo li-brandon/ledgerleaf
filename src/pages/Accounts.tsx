@@ -1,59 +1,107 @@
+import { useState, type FormEvent } from 'react';
+import type { PageProps } from '../App';
 import { LineChart } from '../components/charts';
 import { fmtMoney, fmtMonth } from '../format';
-import { accountBalance, netBalance, netWorthByMonth } from '../lib/insights';
-import type { AccountType } from '../lib/types';
+import { groupAccounts, netWorth, type AccountRow } from '../lib/accounts';
+import { netWorthByMonth } from '../lib/insights';
+import { transactionsHref } from '../lib/routes';
 import type { Ledger } from '../store';
 import EmptyState from './EmptyState';
 
-const GROUPS: { type: AccountType; label: string }[] = [
-  { type: 'checking', label: 'Cash' },
-  { type: 'savings', label: 'Savings' },
-  { type: 'credit', label: 'Credit cards' },
-  { type: 'investment', label: 'Investments' },
-  { type: 'loan', label: 'Loans' },
-];
-
-export default function Accounts({ ledger }: { ledger: Ledger }) {
+export default function Accounts({ ledger }: PageProps) {
   const { accounts, transactions, balanceSnapshots } = ledger.state;
+  const [showHidden, setShowHidden] = useState(false);
   if (!accounts.length) return <><h1>Accounts</h1><EmptyState ledger={ledger} /></>;
 
+  const hiddenCount = accounts.filter((a) => a.hidden).length;
+  const groups = groupAccounts(accounts, transactions, { showHidden });
+  const worth = netWorth(accounts, transactions);
   const trend = netWorthByMonth(accounts, balanceSnapshots).slice(-12);
   const count: Record<string, number> = {};
   for (const t of transactions) count[t.accountId] = (count[t.accountId] ?? 0) + 1;
 
   return (
     <>
-      <h1>Accounts <small>{accounts.length} linked</small></h1>
+      <h1>Accounts <small>{accounts.length - hiddenCount} shown{hiddenCount ? ` · ${hiddenCount} hidden` : ''}</small></h1>
       <section className="card">
-        <h3>Net balance</h3>
-        <p className="hero">{fmtMoney(netBalance(accounts, transactions))}</p>
+        <h3>Net worth</h3>
+        <p className={`hero ${worth.netWorth < 0 ? 'neg' : ''}`}>{fmtMoney(worth.netWorth)}</p>
+        <dl className="stats">
+          <div><dt>Assets</dt><dd>{fmtMoney(worth.assets)}</dd></div>
+          <div><dt>Liabilities</dt><dd>{fmtMoney(worth.liabilities)}</dd></div>
+        </dl>
         {trend.length > 1 && (
           <LineChart label="Net worth at the end of each month" points={trend.map((p) => ({ label: fmtMonth(p.month), value: p.total }))} />
         )}
       </section>
-      <div className="grid two">
-        {GROUPS.map(({ type, label }) => {
-          const list = accounts.filter((a) => a.type === type);
-          if (!list.length) return null;
-          const total = list.reduce((s, a) => s + accountBalance(a, transactions), 0);
-          return (
-            <section key={type} className="card">
-              <h3>{label} <span className={total < 0 ? 'neg' : ''}>{fmtMoney(total)}</span></h3>
-              <ul className="ruled">
-                {list.map((a) => {
-                  const bal = accountBalance(a, transactions);
-                  return (
-                    <li key={a.id}>
-                      <span>{a.name}<em>{count[a.id] ?? 0} transactions</em></span>
-                      <b className={bal < 0 ? 'neg' : ''}>{fmtMoney(bal)}</b>
-                    </li>
-                  );
-                })}
+      {hiddenCount > 0 && (
+        <div className="row toolbar">
+          <button className={`chip ${showHidden ? 'on' : ''}`} aria-pressed={showHidden} onClick={() => setShowHidden(!showHidden)}>
+            Show hidden ({hiddenCount})
+          </button>
+        </div>
+      )}
+      {groups.length ? (
+        <div className="grid two">
+          {groups.map((g) => (
+            <section key={g.id} className="card" aria-label={g.label}>
+              <h3>
+                {g.label}
+                <span className={g.subtotal < 0 ? 'neg' : ''}>{fmtMoney(g.subtotal)}</span>
+              </h3>
+              <ul className="ruled accounts">
+                {g.accounts.map((row) => <AccountItem key={row.account.id} row={row} count={count[row.account.id] ?? 0} ledger={ledger} />)}
               </ul>
             </section>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <p className="muted">Every account is hidden. Use “Show hidden” to bring one back.</p>
+      )}
     </>
+  );
+}
+
+function AccountItem({ row: { account: a, balance }, count, ledger }: { row: AccountRow; count: number; ledger: Ledger }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(a.name);
+
+  function save(e: FormEvent) {
+    e.preventDefault();
+    ledger.renameAccount(a.id, name);
+    setEditing(false);
+  }
+
+  function startEditing() {
+    setName(a.name);
+    setEditing(true);
+  }
+
+  return (
+    <li className={a.hidden ? 'is-hidden' : undefined}>
+      {editing ? (
+        <form className="rename" onSubmit={save} onKeyDown={(e) => e.key === 'Escape' && setEditing(false)}>
+          <input aria-label={`New name for ${a.name}`} value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
+          <button type="submit" disabled={!name.trim()}>Save</button>
+          <button type="button" className="link" onClick={() => setEditing(false)}>Cancel</button>
+        </form>
+      ) : (
+        <span>
+          <a href={transactionsHref(a.id)} className="acct-name">{a.name}</a>
+          {a.hidden && <span className="tag"> Hidden</span>}
+          <em>
+            {[a.institution, `${count} transaction${count === 1 ? '' : 's'}`].filter(Boolean).join(' · ')}
+            {' · '}
+            <button type="button" className="link" onClick={startEditing} aria-label={`Rename ${a.name}`}>Rename</button>
+            {' · '}
+            <button type="button" className="link" onClick={() => ledger.setAccountHidden(a.id, !a.hidden)}
+              aria-label={`${a.hidden ? 'Unhide' : 'Hide'} ${a.name}`}>
+              {a.hidden ? 'Unhide' : 'Hide'}
+            </button>
+          </em>
+        </span>
+      )}
+      <b className={balance < 0 ? 'neg' : ''}>{fmtMoney(balance)}</b>
+    </li>
   );
 }

@@ -131,6 +131,17 @@ input:focus, select:focus, button:focus-visible, .btn:focus-visible { outline: 2
 .filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .filters input[type=search] { flex: 1; min-width: min(220px, 100%); }
 
+/* ---------- Accounts ---------- */
+button.link { background: none; border: 0; padding: 0; color: var(--color-accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.toolbar { margin-bottom: var(--space-4); }
+.accounts .acct-name { color: var(--color-text); font-weight: 600; text-decoration: none; }
+.accounts .acct-name:hover { color: var(--color-accent); text-decoration: underline; }
+.accounts li.is-hidden > span, .accounts li.is-hidden > b { opacity: .6; }
+.accounts .tag { color: var(--color-text-muted); margin-left: var(--space-1); }
+.rename { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.rename input { padding: 4px var(--space-2); min-width: 0; flex: 1; }
+.rename button[type=submit] { padding: 5px var(--space-3); }
+
 /* ---------- Tables ---------- */
 .table-scroll { overflow-x: auto; margin: 0 calc(-1 * var(--space-2)); padding: 0 var(--space-2); }
 table.tx { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
