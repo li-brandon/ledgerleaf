@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { emptyLedger } from '../migrate';
+import { addMerchantRule, editTransaction, reviewCount, setCategory, setReviewed } from '../txEdits';
 import {
   CsvImportProvider, MockProvider, ProviderRegistry, SyncError, applySync, fetchSync, hashId, mergeSync, providers,
   syncBalances,
@@ -197,6 +198,53 @@ describe('mergeSync edit preservation', () => {
     expect(again.state.transactions).toHaveLength(state.transactions.length);
     expect(again.state.transactions.find((t) => t.id === target.id))
       .toMatchObject({ category: 'Travel', categoryId: 'travel', notes: 'note', reviewed: true });
+  });
+});
+
+describe('edits through the ledger and new imports', () => {
+  it('keeps merchant, notes, reviewed and category edited in the ledger through a re-sync', async () => {
+    const p = new MockProvider(now);
+    const { state } = await syncOnce(emptyLedger('2026-10'), p);
+    const target = state.transactions[0];
+    let edited = editTransaction(state, target.id, { merchant: 'Renamed Merchant', notes: 'split with Alex', reviewed: true });
+    edited = setCategory(edited, [target.id], 'Travel');
+    const again = await syncOnce(edited, p);
+    expect(again.received).toBeGreaterThan(0);
+    expect(again.added).toBe(0);
+    expect(again.state.transactions.find((t) => t.id === target.id)).toMatchObject({
+      merchant: 'Renamed Merchant', notes: 'split with Alex', reviewed: true, category: 'Travel', categoryId: 'travel',
+    });
+  });
+
+  it('keeps bulk reviewed transactions reviewed through a re-sync', async () => {
+    const p = new MockProvider(now);
+    const { state } = await syncOnce(emptyLedger('2026-10'), p);
+    const reviewed = setReviewed(state, state.transactions.map((t) => t.id), true);
+    const again = await syncOnce(reviewed, p);
+    expect(reviewCount(again.state.transactions)).toBe(0);
+  });
+
+  it('imports new transactions unreviewed even when the provider says otherwise', async () => {
+    const p = fixedProvider({ accounts: [account], transactions: [tx('t1', { reviewed: true }), tx('t2')] });
+    const { state } = await syncOnce(emptyLedger('2026-10'), p);
+    expect(state.transactions.map((t) => t.reviewed)).toEqual([false, false]);
+  });
+
+  it('imports CSV rows unreviewed', async () => {
+    const csv = new CsvImportProvider('date,description,amount\n2026-10-01,Tea,-3\n2026-10-02,Pay,100', { accountId: 'a1', mapping: { date: 'date', description: 'description', amount: 'amount' } });
+    const { state } = await syncOnce({ ...emptyLedger('2026-10'), accounts: [account] }, csv);
+    expect(state.transactions).toHaveLength(2);
+    expect(reviewCount(state.transactions)).toBe(2);
+  });
+
+  it('categorizes new imports with rules but leaves existing transactions alone', async () => {
+    const base = await syncOnce(emptyLedger('2026-10'), fixedProvider({ accounts: [account], transactions: [tx('Cafe 1', { description: 'CAFE' })] }));
+    const ruled = addMerchantRule(setReviewed(base.state, ['Cafe 1'], true), 'Cafe 1', 'Dining');
+    const kept = setCategory(ruled, ['Cafe 1'], 'Travel');
+    const p = fixedProvider({ accounts: [], transactions: [tx('Cafe 1', { description: 'CAFE' }), tx('Cafe 2', { description: 'cafe', date: '2026-10-02' })] });
+    const { state } = await syncOnce(kept, p);
+    expect(state.transactions.find((t) => t.id === 'Cafe 2')).toMatchObject({ category: 'Dining', categoryId: 'dining', reviewed: false });
+    expect(state.transactions.find((t) => t.id === 'Cafe 1')).toMatchObject({ category: 'Travel', reviewed: true });
   });
 });
 

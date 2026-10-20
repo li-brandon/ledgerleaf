@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { diffLedger, loadLedger, readLedger, saveLedger } from '../ledger';
 import { createPersister } from '../persister';
 import { V1_KEY, V2_KEY, emptyLedger, migrate, type LedgerStateV1 } from '../../lib/migrate';
+import { applySync } from '../../lib/sync';
+import { addMerchantRule, editTransaction, setReviewed } from '../../lib/txEdits';
 import type { LedgerState } from '../../lib/types';
 import { ADAPTERS, makeTransactions, memoryStorage } from './helpers';
 
@@ -82,6 +84,27 @@ describe.each(ADAPTERS)('ledger on %s', (_, open) => {
     expect(loaded?.rules).toEqual([]);
     expect(loaded?.lastSync).toBeUndefined();
     expect(await repo.meta.get()).not.toHaveProperty('lastSync');
+  });
+
+  it('persists transaction edits and rules, which then survive a re-sync', async () => {
+    const repo = await open();
+    const prev = sample();
+    await saveLedger(repo, prev);
+    const [a, b] = prev.transactions;
+    let next = editTransaction(prev, a.id, { merchant: 'Corner Shop', notes: 'milk', reviewed: true });
+    next = addMerchantRule(next, b.id, 'Health');
+    next = setReviewed(next, [b.id], true);
+    await saveLedger(repo, next, prev);
+
+    const loaded = (await readLedger(repo))!;
+    expect(loaded.transactions.find((t) => t.id === a.id)).toMatchObject({ merchant: 'Corner Shop', notes: 'milk', reviewed: true });
+    expect(loaded.transactions.find((t) => t.id === b.id)).toMatchObject({ categoryId: 'health', reviewed: true });
+    expect(loaded.rules[0]).toMatchObject({ merchant: b.description, categoryId: 'health' });
+
+    const incoming = { accounts: [], transactions: [a, b].map((t) => ({ ...t, merchant: undefined, notes: undefined, reviewed: false })) };
+    const { state } = applySync(loaded, 'bank', incoming, new Date(2026, 9, 21));
+    expect(state.transactions.find((t) => t.id === a.id)).toMatchObject({ merchant: 'Corner Shop', notes: 'milk', reviewed: true });
+    expect(state.transactions.find((t) => t.id === b.id)).toMatchObject({ categoryId: 'health', reviewed: true });
   });
 
   it('preserves record order, which the stores do not', async () => {
