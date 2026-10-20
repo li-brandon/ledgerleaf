@@ -197,13 +197,13 @@ function SeriesTable({ series, today, actions }: {
                       : 'No matching charges yet'}
                   </em>
                 </td>
-                <td>{CADENCE_LABELS[s.cadence]}</td>
-                <td className="num">{fmtMoney(s.typical)}</td>
-                <td>
+                <td data-label="Cadence">{CADENCE_LABELS[s.cadence]}</td>
+                <td className="num" data-label="Typical">{fmtMoney(s.typical)}</td>
+                <td data-label="Next expected">
                   {fmtDue(s.state === 'missed' ? s.nextDate : s.upcomingDate, today)}
                   {s.state === 'missed' && <em className="rec-meta">then {fmtDue(s.upcomingDate, today)}</em>}
                 </td>
-                <td className="num">{fmtMoney(s.monthly)}</td>
+                <td className="num" data-label="Per month">{fmtMoney(s.monthly)}</td>
                 <td className="rec-act">{actions(s)}</td>
               </tr>
             );
