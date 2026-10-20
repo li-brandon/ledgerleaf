@@ -62,14 +62,15 @@ function diffStore<K extends ModelName>(
 }
 
 /** Persist `next` in one transaction, writing only what changed since `prev` when given. */
-export function saveLedger(repo: Repository, next: LedgerState, prev?: LedgerState): Promise<void> {
-  return repo.apply(diffLedger(next, prev));
+export async function saveLedger(repo: Repository, next: LedgerState, prev?: LedgerState): Promise<void> {
+  await repo.apply(diffLedger(next, prev));
 }
 
 /**
  * Load the ledger. On first run (empty database) a localStorage save from before the
  * IndexedDB move is migrated, written to the repository and removed from localStorage;
- * with nothing to migrate a fresh ledger is written instead.
+ * with nothing to migrate a fresh ledger is written instead. If another load (a second
+ * tab, or a re-run effect) initialises the database first, its ledger wins.
  */
 export async function loadLedger(repo: Repository, storage = defaultStorage()): Promise<LedgerState> {
   const stored = await readLedger(repo);
@@ -77,7 +78,7 @@ export async function loadLedger(repo: Repository, storage = defaultStorage()): 
 
   const legacy = readLegacy(storage);
   const state = legacy.found ? migrate(legacy.value) : emptyLedger();
-  await saveLedger(repo, state);
+  if (!(await repo.apply(diffLedger(state), { ifEmpty: true }))) return (await readLedger(repo))!;
   if (legacy.found) for (const k of LEGACY_KEYS) storage?.removeItem(k);
   return state;
 }

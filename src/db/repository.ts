@@ -87,7 +87,11 @@ export interface Repository {
   meta: MetaStore;
   /** Every record plus meta, read in one transaction. */
   readAll(): Promise<{ records: LedgerRecords; meta: Meta }>;
-  /** Apply a batch of writes in one transaction: all of it lands or none of it does. */
-  apply(changes: LedgerChanges): Promise<void>;
+  /**
+   * Apply a batch of writes in one transaction: all of it lands or none of it does.
+   * With `ifEmpty`, nothing is written if the database already holds a ledger (meta has
+   * a version), checked in the same transaction; resolves to whether the batch was applied.
+   */
+  apply(changes: LedgerChanges, options?: { ifEmpty?: boolean }): Promise<boolean>;
   close(): void;
 }

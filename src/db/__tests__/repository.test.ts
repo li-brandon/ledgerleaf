@@ -135,6 +135,13 @@ describe.each(ADAPTERS)('%s repository', (_, open) => {
     expect(meta).toEqual({});
   });
 
+  it('ifEmpty only applies to a database without a ledger', async () => {
+    const repo = await open();
+    expect(await repo.apply({ put: { accounts: [account.a] }, meta: { version: 2 } }, { ifEmpty: true })).toBe(true);
+    expect(await repo.apply({ clear: true, meta: { version: 2 } }, { ifEmpty: true })).toBe(false);
+    expect(await repo.accounts.getAll()).toEqual([account.a]);
+  });
+
   it('rolls back the whole batch when one write fails', async () => {
     const repo = await open();
     await repo.apply({ put: { accounts: [account.a] }, meta: { version: 2 } });

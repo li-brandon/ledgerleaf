@@ -93,8 +93,13 @@ function idbRepository(db: IDBPDatabase<LedgerDB>): Repository {
       return { records, meta };
     },
 
-    async apply(changes: LedgerChanges) {
+    async apply(changes: LedgerChanges, options) {
       const tx = raw.transaction(STORES, 'readwrite');
+      // Awaiting a request of the same transaction keeps it open, so check-then-write is atomic.
+      if (options?.ifEmpty && (await tx.objectStore('meta').get('version')) !== undefined) {
+        await tx.done;
+        return false;
+      }
       await commit(tx, (ops) => {
         if (changes.clear) for (const n of STORES) ops.push(tx.objectStore(n).clear());
         for (const n of MODEL_NAMES) {
@@ -107,6 +112,7 @@ function idbRepository(db: IDBPDatabase<LedgerDB>): Repository {
           ops.push(os.clear(), ...writeMeta(os, changes.meta));
         }
       });
+      return true;
     },
 
     close: () => db.close(),

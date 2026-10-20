@@ -140,6 +140,14 @@ describe.each(ADAPTERS)('ledger on %s', (_, open) => {
     expect(storage.data.has(V1_KEY)).toBe(true);
   });
 
+  it('does not overwrite a ledger written by a concurrent first load', async () => {
+    const repo = await open();
+    const storage = memoryStorage({ [V1_KEY]: JSON.stringify(v1) });
+    const [a, b] = await Promise.all([loadLedger(repo, storage), loadLedger(repo, memoryStorage())]);
+    expect(a).toEqual(b);
+    expect(await readLedger(repo)).toEqual(a);
+  });
+
   it('leaves an unreadable localStorage save in place', async () => {
     const repo = await open();
     const storage = memoryStorage({ [V2_KEY]: '{not json' });

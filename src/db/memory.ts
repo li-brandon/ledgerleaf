@@ -66,7 +66,8 @@ export function createMemoryRepository(): Repository {
       ) as unknown as LedgerRecords;
       return { records, meta: structuredClone(meta) };
     },
-    async apply(changes: LedgerChanges) {
+    async apply(changes: LedgerChanges, options) {
+      if (options?.ifEmpty && meta.version !== undefined) return false;
       // Work on copies and swap at the end so a throw leaves the data untouched.
       const next = emptyTables();
       for (const name of MODEL_NAMES) {
@@ -78,6 +79,7 @@ export function createMemoryRepository(): Repository {
       }
       meta = changes.meta ? cleanMeta(changes.meta) : changes.clear ? {} : meta;
       tables = next;
+      return true;
     },
     close() {},
   };
