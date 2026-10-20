@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { emptyLedger } from '../migrate';
 import {
-  CsvImportProvider, MockProvider, SyncError, applySync, fetchSync, hashId, mergeSync,
+  CsvImportProvider, MockProvider, ProviderRegistry, SyncError, applySync, fetchSync, hashId, mergeSync, providers,
   type SyncProvider, type SyncResult,
 } from '../sync';
 import type { Account, LedgerState, Transaction } from '../types';
@@ -71,6 +71,24 @@ describe('CsvImportProvider', () => {
     expect({ id: p.id, kind: p.kind, requiresAuth: p.requiresAuth }).toEqual({ id: 'csv', kind: 'file', requiresAuth: false });
     expect(await p.fetchTransactions()).toHaveLength(1);
     expect(p.skipped).toBe(1);
+  });
+});
+
+describe('ProviderRegistry', () => {
+  it('lists the built-in providers with their metadata', () => {
+    expect(providers.list().map(({ id, name, kind, requiresAuth }) => ({ id, name, kind, requiresAuth }))).toEqual([
+      { id: 'mock', name: 'Demo Bank (sample data)', kind: 'demo', requiresAuth: false },
+      { id: 'csv', name: 'CSV import', kind: 'file', requiresAuth: false },
+    ]);
+    const csv = providers.get('csv');
+    expect(csv?.kind === 'file' && csv.create('').id).toBe('csv');
+  });
+
+  it('rejects duplicate ids', () => {
+    const entry = { id: 'x', name: 'X', kind: 'demo', requiresAuth: false, create: () => fixedProvider(empty) } as const;
+    const r = new ProviderRegistry().register(entry);
+    expect(() => r.register(entry)).toThrow(/already registered/);
+    expect(r.list()).toHaveLength(1);
   });
 });
 
