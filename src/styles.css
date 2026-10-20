@@ -223,7 +223,8 @@ kbd { font: 600 11px var(--font-sans); border: 1px solid var(--color-border); bo
 .tx-none { padding: var(--space-8) var(--space-4); }
 
 /* ---------- Budgets & charts ---------- */
-.meter { height: 10px; background: var(--color-track); border-radius: 5px; overflow: hidden; margin: var(--space-2) 0; }
+.meter { position: relative; height: 10px; background: var(--color-track); border-radius: 5px; overflow: hidden; margin: var(--space-2) 0; }
+.meter i { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--color-text); opacity: .55; }
 .meter span { display: block; height: 100%; background: var(--color-accent); border-radius: 5px; }
 .meter.near span { background: var(--color-warning); }
 .meter.over span { background: var(--color-danger); }
@@ -232,6 +233,22 @@ kbd { font: 600 11px var(--font-sans); border: 1px solid var(--color-border); bo
 .tag.near { color: var(--color-warning); }
 .budgets { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 18px 28px; margin-top: 10px; }
 .budget { padding-bottom: 14px; border-bottom: 1px dashed var(--color-border); }
+.budget.is-over { border-bottom-color: var(--color-danger); }
+.budget.is-over .budget-name { color: var(--color-danger); }
+.budget-name { min-width: 0; overflow-wrap: anywhere; }
+.budget-figs, .budget-total { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin: var(--space-1) 0; font-variant-numeric: tabular-nums; }
+.budget-figs > div, .budget-total > div { min-width: 0; }
+.budget-figs dt, .budget-total dt { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: .06em; color: var(--color-text-muted); }
+.budget-figs dd, .budget-total dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.budget-note { margin: 0 0 var(--space-1); min-height: 1.5em; }
+.budget-edit { margin-top: var(--space-1); }
+.budget-edit .check { grid-column: auto; }
+.budget-total { grid-template-columns: repeat(auto-fit, minmax(min(96px, 100%), 1fr)); margin-top: var(--space-5); padding-top: var(--space-3); border-top: 2px solid var(--color-text); }
+.budget-total dd { font: 600 var(--text-lg) var(--font-serif); }
+.month-switch { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin: calc(-1 * var(--space-2)) 0 var(--space-4); }
+.month-switch .btn { padding: 4px var(--space-3); font-size: var(--text-lg); line-height: 1.2; }
+.month-switch strong { font: 600 var(--text-lg) var(--font-serif); min-width: 9.5em; text-align: center; }
+.month-now { font-size: var(--text-sm); }
 .limit input { width: 90px; padding: 3px 6px; margin-left: var(--space-1); }
 .add { margin-top: 18px; }
 
