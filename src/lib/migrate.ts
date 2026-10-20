@@ -62,6 +62,8 @@ export function normalizeLedger(s: Partial<LedgerState>): LedgerState {
     balanceSnapshots: list(s.balanceSnapshots),
   };
   if (s.lastSync) out.lastSync = s.lastSync;
+  const syncs = isObject(s.syncs) ? Object.entries(s.syncs).filter(([, v]) => isObject(v) && typeof v.lastSync === 'string') : [];
+  if (syncs.length) out.syncs = Object.fromEntries(syncs.map(([id, v]) => [id, { lastSync: v.lastSync }]));
   return out;
 }
 

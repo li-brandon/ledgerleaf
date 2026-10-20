@@ -1,4 +1,4 @@
-import type { Account, BalanceSnapshot, Budget, Category, Rule, Transaction } from '../lib/types';
+import type { Account, BalanceSnapshot, Budget, Category, LedgerState, Rule, Transaction } from '../lib/types';
 
 /** Snapshots have no id; they are keyed by account and day. */
 export type SnapshotKey = [accountId: string, date: string];
@@ -32,6 +32,7 @@ export interface Meta {
   /** Schema version of the stored records; absent means the database has never been written. */
   version?: number;
   lastSync?: string;
+  syncs?: LedgerState['syncs'];
   /**
    * Record keys (see {@link recordId}) of each store in ledger order. Stores return records
    * in key order, but order is meaningful (newest-first transactions, rule precedence).

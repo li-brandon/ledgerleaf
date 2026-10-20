@@ -78,6 +78,12 @@ export interface Budget {
 /** Monthly budget amount per category name. */
 export type Budgets = Record<string, number>;
 
+/** Sync bookkeeping for one provider. */
+export interface ProviderSyncState {
+  /** ISO timestamp of the last successful sync. */
+  lastSync: string;
+}
+
 export const SCHEMA_VERSION = 2;
 
 export interface LedgerState {
@@ -88,7 +94,10 @@ export interface LedgerState {
   rules: Rule[];
   budgets: Budget[];
   balanceSnapshots: BalanceSnapshot[];
+  /** Last successful sync from any provider. */
   lastSync?: string;
+  /** Per-provider sync state, keyed by provider id. */
+  syncs?: Record<string, ProviderSyncState>;
 }
 
 export const CATEGORIES = [
