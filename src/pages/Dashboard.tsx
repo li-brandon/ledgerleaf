@@ -1,6 +1,6 @@
 import { BarChart, Meter } from '../components/charts';
 import { fmtDate, fmtMoney, fmtMonth } from '../format';
-import { budgetProgress, budgetTotals, budgetsForMonth, currentMonth, spendExclusions } from '../lib/budget';
+import { currentMonth, monthBudget, monthTotals, spendExclusions } from '../lib/budget';
 import { netWorth } from '../lib/accounts';
 import { accountBalance, monthRange, monthlySpend } from '../lib/insights';
 import { transactionsHref } from '../lib/routes';
@@ -12,8 +12,8 @@ export default function Dashboard({ ledger }: { ledger: Ledger }) {
   if (!transactions.length) return <><h1>Overview</h1><EmptyState ledger={ledger} /></>;
   const month = currentMonth();
   const excluded = spendExclusions(categories);
-  const totals = budgetTotals(budgetProgress(budgetsForMonth(budgets, categories, month), transactions, month, excluded));
-  const ratio = totals.budgeted ? totals.spent / totals.budgeted : 0;
+  const totals = monthTotals(monthBudget({ budgets, categories, transactions }, month));
+  const ratio = totals.available > 0 ? totals.spent / totals.available : totals.spent > 0 ? Infinity : 0;
   const months = monthlySpend(transactions, monthRange(month, 4), excluded);
   const accountName = Object.fromEntries(accounts.map((a) => [a.id, a.name]));
   return (
@@ -37,12 +37,12 @@ export default function Dashboard({ ledger }: { ledger: Ledger }) {
         </section>
         <section className="card">
           <h3>Spent this month</h3>
-          <p className="hero">{fmtMoney(totals.spent)} <small>of {fmtMoney(totals.budgeted)}</small></p>
+          <p className="hero">{fmtMoney(totals.spent)} <small>of {fmtMoney(totals.available)}</small></p>
           <Meter ratio={ratio} status={ratio > 1 ? 'over' : ratio >= 0.85 ? 'near' : 'ok'} />
           <p className="muted">
-            {totals.spent > totals.budgeted
-              ? `${fmtMoney(totals.spent - totals.budgeted)} over budget`
-              : `${fmtMoney(totals.budgeted - totals.spent)} left to spend`}
+            {totals.remaining < 0
+              ? `${fmtMoney(-totals.remaining)} over budget`
+              : `${fmtMoney(totals.remaining)} left to spend`}
           </p>
         </section>
       </div>
