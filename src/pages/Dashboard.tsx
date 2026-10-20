@@ -1,7 +1,9 @@
 import { BarChart, Meter } from '../components/charts';
 import { fmtDate, fmtMoney, fmtMonth } from '../format';
 import { budgetProgress, budgetTotals, budgetsForMonth, currentMonth } from '../lib/budget';
-import { accountBalance, monthRange, monthlySpend, netBalance } from '../lib/insights';
+import { netWorth } from '../lib/accounts';
+import { accountBalance, monthRange, monthlySpend } from '../lib/insights';
+import { transactionsHref } from '../lib/routes';
 import type { Ledger } from '../store';
 import EmptyState from './EmptyState';
 
@@ -18,12 +20,18 @@ export default function Dashboard({ ledger }: { ledger: Ledger }) {
       <h1>Overview <small>{fmtMonth(month, 'long')}</small></h1>
       <div className="grid two">
         <section className="card">
-          <h3>Net balance</h3>
-          <p className="hero">{fmtMoney(netBalance(accounts, transactions))}</p>
+          <h3>Net worth <a href="#/accounts" className="more">Accounts →</a></h3>
+          <p className="hero">{fmtMoney(netWorth(accounts, transactions).netWorth)}</p>
           <ul className="ruled">
-            {accounts.map((a) => (
-              <li key={a.id}><span>{a.name} <em>{a.type}</em></span><b className={accountBalance(a, transactions) < 0 ? 'neg' : ''}>{fmtMoney(accountBalance(a, transactions))}</b></li>
-            ))}
+            {accounts.filter((a) => !a.hidden).map((a) => {
+              const bal = accountBalance(a, transactions);
+              return (
+                <li key={a.id}>
+                  <span><a href={transactionsHref(a.id)}>{a.name}</a> <em>{a.type}</em></span>
+                  <b className={bal < 0 ? 'neg' : ''}>{fmtMoney(bal)}</b>
+                </li>
+              );
+            })}
           </ul>
         </section>
         <section className="card">
