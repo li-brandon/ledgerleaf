@@ -10,17 +10,27 @@ export const ROUTES = [
   { id: 'settings', label: 'Settings' },
 ] as const;
 
-export type RouteId = (typeof ROUTES)[number]['id'];
+/** Pages reached from another page rather than the nav; `parent` stays highlighted in the nav. */
+export const SUBPAGES = [
+  { id: 'categories', label: 'Categories & rules', parent: 'settings' },
+] as const;
+
+export type NavRouteId = (typeof ROUTES)[number]['id'];
+export type RouteId = NavRouteId | (typeof SUBPAGES)[number]['id'];
+
+/** The nav entry to highlight for a route: itself, or the page a subpage belongs to. */
+export const navRoute = (id: RouteId): NavRouteId => SUBPAGES.find((p) => p.id === id)?.parent ?? (id as NavRouteId);
 
 export const DEFAULT_ROUTE: RouteId = 'overview';
 
-const IDS = new Set<string>(ROUTES.map((r) => r.id));
+const IDS = new Set<string>([...ROUTES, ...SUBPAGES].map((r) => r.id));
 
 /** Old or alternate slugs that should keep working as deep links. */
 const ALIASES = new Map<string, RouteId>([
   ['ledger', 'transactions'],
   ['dashboard', 'overview'],
   ['home', 'overview'],
+  ['rules', 'categories'],
 ]);
 
 export const isRouteId = (s: string): s is RouteId => IDS.has(s);
@@ -42,7 +52,7 @@ export function routeHref(id: RouteId, params: RouteParams = {}): string {
 /** Transactions, filtered to one account when `accountId` is given. */
 export const transactionsHref = (accountId?: string) => routeHref('transactions', accountId ? { account: accountId } : {});
 
-export const routeLabel = (id: RouteId) => ROUTES.find((r) => r.id === id)!.label;
+export const routeLabel = (id: RouteId) => [...ROUTES, ...SUBPAGES].find((r) => r.id === id)!.label;
 
 /**
  * Resolve a `location.hash` value to a route. Accepts `#/budgets`, `#budgets`,
