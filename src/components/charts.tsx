@@ -105,6 +105,57 @@ export function LineChart({ points, label, W = 440 }: { points: { label: string;
   );
 }
 
+/**
+ * Cumulative daily spend: this month (solid) against last month (dashed), with an optional
+ * budget line. Series are indexed by day of month, starting at day 1.
+ */
+export function PaceChart({ current, previous, budget, label, W = 440 }: {
+  current: number[]; previous: number[]; budget?: number; label: string; W?: number;
+}) {
+  const days = Math.max(28, current.length, previous.length);
+  const max = Math.max(1, ...current, ...previous, budget ?? 0);
+  const step = niceStep(max / 4);
+  const top = Math.ceil(max / step) * step;
+  const iw = W - PAD.left - PAD.right;
+  const ih = H - PAD.top - PAD.bottom;
+  const x = (day: number) => PAD.left + ((day - 1) / (days - 1)) * iw;
+  const y = (v: number) => PAD.top + ih - (v / top) * ih;
+  const path = (s: number[]) => s.map((v, i) => `${x(i + 1)},${y(v)}`).join(' ');
+  const last = current.length;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="chart" role="img" aria-label={label}>
+      {ticks(top).map((t) => (
+        <g key={t}>
+          <line x1={PAD.left} x2={W - PAD.right} y1={y(t)} y2={y(t)} className="grid" />
+          <text x={PAD.left - 8} y={y(t) + 4} className="axis" textAnchor="end">{fmtWhole(t)}</text>
+        </g>
+      ))}
+      {[1, 8, 15, 22, days].map((d) => (
+        <text key={d} x={x(d)} y={H - 8} className="axis" textAnchor={d === 1 ? 'start' : d === days ? 'end' : 'middle'}>{d}</text>
+      ))}
+      {budget !== undefined && budget > 0 && (
+        <>
+          <line x1={PAD.left} x2={W - PAD.right} y1={y(budget)} y2={y(budget)} className="avg" />
+          <text x={PAD.left + 4} y={y(budget) - 6} className="axis">budget {fmtWhole(budget)}</text>
+        </>
+      )}
+      {previous.length > 1 && (
+        <polyline fill="none" stroke="var(--moss)" strokeWidth={2} strokeDasharray="5 4" strokeLinejoin="round" points={path(previous)}>
+          <title>{`Last month: ${fmtMoney(previous[previous.length - 1])}`}</title>
+        </polyline>
+      )}
+      {last > 0 && (
+        <>
+          <polyline fill="none" stroke="var(--leaf)" strokeWidth={2.5} strokeLinejoin="round" points={path(current)} />
+          <circle cx={x(last)} cy={y(current[last - 1])} r={5} fill="var(--leaf)" stroke="var(--paper)" strokeWidth={2}>
+            <title>{`Day ${last}: ${fmtMoney(current[last - 1])}`}</title>
+          </circle>
+        </>
+      )}
+    </svg>
+  );
+}
+
 /** Horizontal progress meter; `ratio` may exceed 1. */
 /** Progress bar; `mark` (0..1) draws a tick, e.g. where spending should be by today. */
 export function Meter({ ratio, status, mark, label }: { ratio: number; status?: 'ok' | 'near' | 'over'; mark?: number; label?: string }) {
