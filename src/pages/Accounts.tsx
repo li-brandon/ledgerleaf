@@ -1,5 +1,6 @@
-import { fmtMoney } from '../format';
-import { accountBalance, netBalance } from '../lib/insights';
+import { LineChart } from '../components/charts';
+import { fmtMoney, fmtMonth } from '../format';
+import { accountBalance, netBalance, netWorthByMonth } from '../lib/insights';
 import type { AccountType } from '../lib/types';
 import type { Ledger } from '../store';
 import EmptyState from './EmptyState';
@@ -13,9 +14,10 @@ const GROUPS: { type: AccountType; label: string }[] = [
 ];
 
 export default function Accounts({ ledger }: { ledger: Ledger }) {
-  const { accounts, transactions } = ledger.state;
+  const { accounts, transactions, balanceSnapshots } = ledger.state;
   if (!accounts.length) return <><h1>Accounts</h1><EmptyState ledger={ledger} /></>;
 
+  const trend = netWorthByMonth(accounts, balanceSnapshots).slice(-12);
   const count: Record<string, number> = {};
   for (const t of transactions) count[t.accountId] = (count[t.accountId] ?? 0) + 1;
 
@@ -25,6 +27,9 @@ export default function Accounts({ ledger }: { ledger: Ledger }) {
       <section className="card">
         <h3>Net balance</h3>
         <p className="hero">{fmtMoney(netBalance(accounts, transactions))}</p>
+        {trend.length > 1 && (
+          <LineChart label="Net worth at the end of each month" points={trend.map((p) => ({ label: fmtMonth(p.month), value: p.total }))} />
+        )}
       </section>
       <div className="grid two">
         {GROUPS.map(({ type, label }) => {

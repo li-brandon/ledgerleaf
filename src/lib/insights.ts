@@ -1,5 +1,5 @@
 import { isSpend, monthKey, round } from './budget';
-import type { Account, Transaction } from './types';
+import type { Account, BalanceSnapshot, Transaction } from './types';
 
 export interface MonthSpend {
   month: string;
@@ -61,3 +61,27 @@ export function accountBalance(account: Account, txns: Transaction[]): number {
 
 export const netBalance = (accounts: Account[], txns: Transaction[]) =>
   round(accounts.reduce((s, a) => s + accountBalance(a, txns), 0));
+
+export interface NetWorthPoint {
+  month: string;
+  total: number;
+}
+
+/**
+ * Net worth at the end of each month that has a balance snapshot, oldest first: each
+ * visible account's latest snapshot so far, carried forward through months without one.
+ */
+export function netWorthByMonth(accounts: Account[], snapshots: BalanceSnapshot[]): NetWorthPoint[] {
+  const visible = new Set(accounts.filter((a) => !a.hidden).map((a) => a.id));
+  const sorted = snapshots.filter((s) => visible.has(s.accountId)).sort((a, b) => a.date.localeCompare(b.date));
+  const latest = new Map<string, number>();
+  const points: NetWorthPoint[] = [];
+  for (const s of sorted) {
+    latest.set(s.accountId, s.balance);
+    const month = monthKey(s.date);
+    const total = round([...latest.values()].reduce((a, b) => a + b, 0));
+    if (points.at(-1)?.month === month) points[points.length - 1].total = total;
+    else points.push({ month, total });
+  }
+  return points;
+}
