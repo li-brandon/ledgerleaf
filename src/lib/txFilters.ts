@@ -17,7 +17,7 @@ export interface TxFilters {
   to: string;
   /** Account id. */
   account: string;
-  /** Category name (case-insensitive) or id. */
+  /** Category name (case-insensitive) or id; several separated by commas match any of them. */
   category: string;
   /** Inclusive bounds on the absolute amount. */
   min?: number;
@@ -96,9 +96,11 @@ export function matcher(f: TxFilters): (t: Transaction) => boolean {
   const [from, to] = f.from && f.to && f.from > f.to ? [f.to, f.from] : [f.from, f.to];
   const [min, max] = f.min !== undefined && f.max !== undefined && f.min > f.max ? [f.max, f.min] : [f.min, f.max];
   const category = f.category.trim().toLowerCase();
+  // The whole value is kept too, so a category whose name contains a comma still matches.
+  const cats = new Set([category, ...category.split(',').map((c) => c.trim())].filter(Boolean));
   return (t) => {
     if (f.account && t.accountId !== f.account) return false;
-    if (category && t.category.toLowerCase() !== category && t.categoryId !== category) return false;
+    if (cats.size && !cats.has(t.category.toLowerCase()) && !(t.categoryId && cats.has(t.categoryId))) return false;
     if (from && t.date < from) return false;
     if (to && t.date > to) return false;
     const abs = Math.abs(t.amount);

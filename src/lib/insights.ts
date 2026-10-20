@@ -107,9 +107,13 @@ export function monthsSpan(months: string[]): { from: string; to: string } {
   return { from: `${sorted[0]}-01`, to: `${last}-${String(lastDay.getDate()).padStart(2, '0')}` };
 }
 
-/** The Transactions list showing the spending behind an insight: money out in `months`, optionally one category or merchant. */
-export function spendHref(months: string[], by: { category?: string; merchant?: string } = {}): string {
-  return filtersHref({ ...EMPTY_FILTERS, ...monthsSpan(months), kind: 'expense', category: by.category ?? '', q: by.merchant ?? '' });
+/**
+ * The Transactions list showing the spending behind an insight: money out in `months`,
+ * optionally in one category (or any of several, e.g. those folded into a chart's "Other") or at one merchant.
+ */
+export function spendHref(months: string[], by: { category?: string | readonly string[]; merchant?: string } = {}): string {
+  const category = typeof by.category === 'string' ? by.category : (by.category ?? []).join(',');
+  return filtersHref({ ...EMPTY_FILTERS, ...monthsSpan(months), kind: 'expense', category, q: by.merchant ?? '' });
 }
 
 export interface Merchant {

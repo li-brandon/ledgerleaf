@@ -85,8 +85,10 @@ export default function Insights({ ledger, params }: PageProps) {
   const spent = rows.reduce((s, r) => s + r.total, 0);
   const folded = new Map<string, number>();
   for (const s of shares) folded.set(chartCategory(s.category), (folded.get(chartCategory(s.category)) ?? 0) + s.total);
+  // "Other" links to exactly the categories folded into it, so its transactions add up to the slice.
+  const others = shares.map((s) => s.category).filter((c) => chartCategory(c) === OTHER);
   const slices = [...folded].map(([key, value]) => ({
-    key, value, href: key === OTHER ? spendHref(months) : spendHref(months, { category: key }),
+    key, value, href: spendHref(months, { category: key === OTHER ? others : key }),
   })).sort((a, b) => (a.key === OTHER ? 1 : b.key === OTHER ? -1 : b.value - a.value));
   const maxShare = shares[0]?.total || 1;
 
