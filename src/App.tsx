@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import { NavIcon } from './components/icons';
 import {
-  ROUTES, canonicalHash, parseRoute, routeHref, routeLabel, type Route, type RouteId, type RouteParams,
+  ROUTES, canonicalHash, navRoute, parseRoute, routeHref, routeLabel, type Route, type RouteId, type RouteParams,
 } from './lib/routes';
 import { reviewCount } from './lib/txEdits';
 import { useLedger, type Ledger } from './store';
@@ -12,6 +12,7 @@ import Budgets from './pages/Budgets';
 import Insights from './pages/Insights';
 import Connections from './pages/Connections';
 import Settings from './pages/Settings';
+import Categories from './pages/Categories';
 
 /** Every page gets the ledger and the route's query parameters. */
 export interface PageProps {
@@ -27,6 +28,7 @@ const PAGES: Record<RouteId, ComponentType<PageProps>> = {
   insights: Insights,
   connections: Connections,
   settings: Settings,
+  categories: Categories,
 };
 
 /** Read the current route, rewriting the address bar if the hash is unknown or non-canonical. */
@@ -73,7 +75,7 @@ export default function App() {
         <a className="brand" href={routeHref('overview')}><Logo /><span>Ledgerleaf</span></a>
         <nav className="nav" aria-label="Main">
           {ROUTES.map(({ id, label }) => (
-            <a key={id} href={routeHref(id)} aria-current={id === route ? 'page' : undefined}>
+            <a key={id} href={routeHref(id)} aria-current={id === route ? 'page' : id === navRoute(route) ? 'location' : undefined}>
               <NavIcon id={id} />
               <span>{label}</span>
               {id === 'transactions' && toReview > 0 && (
