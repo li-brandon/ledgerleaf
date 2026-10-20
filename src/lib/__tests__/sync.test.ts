@@ -172,6 +172,14 @@ describe('mergeSync edit preservation', () => {
     expect(r.accounts).toEqual([{ ...account, name: 'Main Checking', hidden: true, balance: 99 }]);
   });
 
+  it('keeps a name the user chose but still refreshes other provider fields', () => {
+    const r = mergeSync(
+      { accounts: [{ ...account, name: 'Bills', renamed: true }], transactions: [] },
+      { accounts: [{ ...account, name: 'Main Checking', institution: 'Fernway' }], transactions: [] },
+    );
+    expect(r.accounts).toEqual([{ ...account, name: 'Bills', renamed: true, institution: 'Fernway' }]);
+  });
+
   it('keeps edits made in the ledger through a full re-sync', async () => {
     const p = new MockProvider(now);
     const { state } = await syncOnce(emptyLedger('2026-10'), p);

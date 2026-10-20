@@ -16,8 +16,10 @@ export interface MergeOutcome {
  * overwritten.
  */
 const PROVIDER_TX_FIELDS = ['date', 'description', 'amount', 'accountId', 'source', 'externalId'] as const;
-/** Account fields a re-sync may refresh; `hidden` stays as the user left it. */
+/** Account fields a re-sync may refresh; `hidden` stays as the user left it, and so does a name they chose. */
 const PROVIDER_ACCOUNT_FIELDS = ['name', 'type', 'institution', 'currency', 'balance'] as const;
+const accountFields = (prev: Account) =>
+  prev.renamed ? PROVIDER_ACCOUNT_FIELDS.filter((f) => f !== 'name') : PROVIDER_ACCOUNT_FIELDS;
 
 /**
  * Identity of a transaction within its provider: source + externalId, falling back to
@@ -54,7 +56,7 @@ export function mergeSync(
   const accounts = new Map<string, Account>(existing.accounts.map((a) => [a.id, a]));
   for (const a of incoming.accounts) {
     const prev = accounts.get(a.id);
-    accounts.set(a.id, prev ? refresh(prev, a, PROVIDER_ACCOUNT_FIELDS) : { ...a });
+    accounts.set(a.id, prev ? refresh(prev, a, accountFields(prev)) : { ...a });
   }
   for (const b of incoming.balances ?? []) {
     const prev = accounts.get(b.accountId);
