@@ -1,15 +1,15 @@
 import { BarChart, Meter } from '../components/charts';
 import { fmtDate, fmtMoney, fmtMonth } from '../format';
-import { budgetProgress, budgetTotals, currentMonth } from '../lib/budget';
+import { budgetProgress, budgetTotals, budgetsForMonth, currentMonth } from '../lib/budget';
 import { accountBalance, monthRange, monthlySpend, netBalance } from '../lib/insights';
 import type { Ledger } from '../store';
 import EmptyState from './EmptyState';
 
 export default function Dashboard({ ledger }: { ledger: Ledger }) {
-  const { accounts, transactions, budgets } = ledger.state;
+  const { accounts, transactions, budgets, categories } = ledger.state;
   if (!transactions.length) return <><h1>Overview</h1><EmptyState ledger={ledger} /></>;
   const month = currentMonth();
-  const totals = budgetTotals(budgetProgress(budgets, transactions, month));
+  const totals = budgetTotals(budgetProgress(budgetsForMonth(budgets, categories, month), transactions, month));
   const ratio = totals.budgeted ? totals.spent / totals.budgeted : 0;
   const months = monthlySpend(transactions, monthRange(month, 4));
   const accountName = Object.fromEntries(accounts.map((a) => [a.id, a.name]));

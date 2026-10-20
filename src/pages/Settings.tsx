@@ -1,9 +1,10 @@
 import { useState } from 'react';
+import { budgetsForMonth, currentMonth } from '../lib/budget';
 import type { Ledger } from '../store';
 
 export default function Settings({ ledger }: { ledger: Ledger }) {
   const [msg, setMsg] = useState('');
-  const { accounts, transactions, budgets, lastSync } = ledger.state;
+  const { accounts, transactions, budgets, categories, lastSync } = ledger.state;
 
   function exportJson() {
     const blob = new Blob([JSON.stringify(ledger.state, null, 2)], { type: 'application/json' });
@@ -23,7 +24,7 @@ export default function Settings({ ledger }: { ledger: Ledger }) {
         <ul className="ruled">
           <li><span>Accounts</span><b>{accounts.length}</b></li>
           <li><span>Transactions</span><b>{transactions.length}</b></li>
-          <li><span>Budgeted categories</span><b>{Object.keys(budgets).length}</b></li>
+          <li><span>Budgeted categories</span><b>{Object.keys(budgetsForMonth(budgets, categories, currentMonth())).length}</b></li>
           <li><span>Last sync</span><b>{lastSync ? new Date(lastSync).toLocaleString() : 'Never'}</b></li>
         </ul>
         <p className="muted">Everything lives in this browser's localStorage. Nothing is sent to a server.</p>

@@ -8,6 +8,8 @@ const GROUPS: { type: AccountType; label: string }[] = [
   { type: 'checking', label: 'Cash' },
   { type: 'savings', label: 'Savings' },
   { type: 'credit', label: 'Credit cards' },
+  { type: 'investment', label: 'Investments' },
+  { type: 'loan', label: 'Loans' },
 ];
 
 export default function Accounts({ ledger }: { ledger: Ledger }) {

@@ -1,17 +1,16 @@
 import { useMemo, useState } from 'react';
 import { fmtDate, fmtMoney } from '../format';
-import { CATEGORIES } from '../lib/types';
 import type { Ledger } from '../store';
 import EmptyState from './EmptyState';
 
 export default function Transactions({ ledger }: { ledger: Ledger }) {
-  const { accounts, transactions } = ledger.state;
+  const { accounts, categories: known, transactions } = ledger.state;
   const [q, setQ] = useState('');
   const [cat, setCat] = useState('');
   const [acct, setAcct] = useState('');
   const categories = useMemo(
-    () => [...new Set([...CATEGORIES, ...transactions.map((t) => t.category)])].sort(),
-    [transactions],
+    () => [...new Set([...known.map((c) => c.name), ...transactions.map((t) => t.category)])].sort(),
+    [known, transactions],
   );
   const accountName = Object.fromEntries(accounts.map((a) => [a.id, a.name]));
   const needle = q.trim().toLowerCase();
