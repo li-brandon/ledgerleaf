@@ -1,4 +1,5 @@
-import type { Account, Transaction } from '../types';
+import { categorize } from '../txEdits';
+import type { Account, Rule, Transaction } from '../types';
 import type { SyncResult } from './types';
 
 export interface MergeOutcome {
@@ -47,12 +48,14 @@ function freeId(id: string, taken: Map<string, unknown>) {
  * nothing and returns unchanged records by reference. Incoming transactions match an
  * existing one by {@link dedupeKey}, or by id when the two come from the same source and
  * do not carry different externalIds. Matches only refresh provider-owned fields, so user
- * edits survive re-syncs. `incoming.balances` update account balances.
+ * edits survive re-syncs. `incoming.balances` update account balances. New transactions
+ * always arrive unreviewed, categorized by the first matching rule in `existing.rules`.
  */
 export function mergeSync(
-  existing: Pick<SyncResult, 'accounts' | 'transactions'>,
+  existing: Pick<SyncResult, 'accounts' | 'transactions'> & { rules?: readonly Rule[] },
   incoming: SyncResult,
 ): MergeOutcome {
+  const rules = existing.rules ?? [];
   const accounts = new Map<string, Account>(existing.accounts.map((a) => [a.id, a]));
   for (const a of incoming.accounts) {
     const prev = accounts.get(a.id);
@@ -92,7 +95,8 @@ export function mergeSync(
     }
     // A different transaction already has this id (e.g. another source): keep both, and
     // remember the provider's id as externalId so the next sync still finds this one.
-    const row = byId.has(t.id) ? { ...t, id: freeId(t.id, byId), externalId: t.externalId ?? t.id } : { ...t };
+    const fresh = categorize(rules, { ...t, reviewed: false });
+    const row = byId.has(t.id) ? { ...fresh, id: freeId(t.id, byId), externalId: t.externalId ?? t.id } : { ...fresh };
     index(row, transactions.push(row) - 1);
     added++;
   }
