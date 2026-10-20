@@ -44,7 +44,7 @@ export default function Connections({ ledger }: { ledger: Ledger }) {
         <h3>Local data</h3>
         <p className="muted">
           {accounts.length} accounts, {transactions.length} transactions
-          {lastSync && ` · last sync ${new Date(lastSync).toLocaleString()}`}. Everything lives in this browser's localStorage.
+          {lastSync && ` · last sync ${new Date(lastSync).toLocaleString()}`}. Everything lives in this browser's IndexedDB.
         </p>
         <a className="btn ghost" href="#/settings">Manage in Settings</a>
       </section>

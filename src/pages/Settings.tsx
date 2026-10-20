@@ -27,7 +27,7 @@ export default function Settings({ ledger }: { ledger: Ledger }) {
           <li><span>Budgeted categories</span><b>{Object.keys(budgetsForMonth(budgets, categories, currentMonth())).length}</b></li>
           <li><span>Last sync</span><b>{lastSync ? new Date(lastSync).toLocaleString() : 'Never'}</b></li>
         </ul>
-        <p className="muted">Everything lives in this browser's localStorage. Nothing is sent to a server.</p>
+        <p className="muted">Everything lives in this browser's IndexedDB. Nothing is sent to a server.</p>
         <div className="row">
           <button className="btn ghost" onClick={exportJson} disabled={!transactions.length}>Export JSON backup</button>
           <a className="btn ghost" href="#/connections">Import data</a>

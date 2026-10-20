@@ -72,7 +72,8 @@ export default function App() {
         <p className="rail-foot">Stored only in this browser.</p>
       </aside>
       <main id="main" ref={mainRef} tabIndex={-1}>
-        <Page ledger={ledger} />
+        {ledger.error && <p className="notice" role="alert">{ledger.error}</p>}
+        {ledger.loading ? <p className="muted" role="status">Loading your ledger…</p> : <Page ledger={ledger} />}
       </main>
     </div>
   );
