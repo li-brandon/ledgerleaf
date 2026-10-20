@@ -1,10 +1,27 @@
 import { useState } from 'react';
+import { demoCounts } from '../db';
 import { budgetsForMonth, currentMonth } from '../lib/budget';
 import type { Ledger } from '../store';
 
 export default function Settings({ ledger }: { ledger: Ledger }) {
   const [msg, setMsg] = useState('');
+  const [clearing, setClearing] = useState(false);
   const { accounts, transactions, budgets, categories, lastSync } = ledger.state;
+  const demo = demoCounts(ledger.state);
+  const hasDemo = demo.accounts + demo.transactions + demo.balanceSnapshots > 0;
+
+  async function clearDemo() {
+    if (!confirm('Remove the demo accounts and transactions? Imported data is kept.')) return;
+    setClearing(true);
+    try {
+      const removed = await ledger.clearDemo();
+      setMsg(`Removed ${removed.transactions} demo transactions and ${removed.accounts} demo accounts.`);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setClearing(false);
+    }
+  }
 
   function exportJson() {
     const blob = new Blob([JSON.stringify(ledger.state, null, 2)], { type: 'application/json' });
@@ -33,6 +50,18 @@ export default function Settings({ ledger }: { ledger: Ledger }) {
           <a className="btn ghost" href="#/connections">Import data</a>
         </div>
       </section>
+      {hasDemo && (
+        <section className="card">
+          <h3>Demo data</h3>
+          <p className="muted">
+            {demo.accounts} sample accounts and {demo.transactions} sample transactions are loaded. Clearing them leaves
+            anything you imported in place.
+          </p>
+          <button className="btn ghost" onClick={clearDemo} disabled={clearing}>
+            {clearing ? 'Clearing…' : 'Clear demo data'}
+          </button>
+        </section>
+      )}
       <section className="card">
         <h3>Danger zone</h3>
         <p className="muted">Erasing removes accounts, transactions and budgets from this browser. It cannot be undone.</p>
