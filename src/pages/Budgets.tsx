@@ -1,17 +1,16 @@
 import type { PageProps } from '../App';
 import { Meter } from '../components/charts';
-import { fmtMoney, fmtMonth } from '../format';
+import { displayCurrency, fmtDate, fmtMoney, fmtMonth } from '../format';
 import {
-  addMonths, currentMonth, isMonthKey, monthBudget, monthElapsed, monthTotals, type BudgetRow,
+  addMonths, budgetPeriod, currentBudgetMonth, isMonthKey, monthBudget, monthElapsed, monthTotals, type BudgetRow,
 } from '../lib/budget';
 import { routeHref } from '../lib/routes';
+import { currencySymbol, settingsOf } from '../lib/settings';
 
 const STATUS_LABEL = { ok: 'On track', near: 'Close to limit', over: 'Over' };
 
 /** Within this share of what is available, spending counts as on pace. */
 const PACE_SLACK = 0.02;
-
-const monthHref = (month: string) => routeHref('budgets', month === currentMonth() ? {} : { month });
 
 const signed = (n: number) => `${n < 0 ? '−' : '+'}${fmtMoney(Math.abs(n))}`;
 
@@ -33,12 +32,15 @@ function statusText(r: BudgetRow) {
 
 export default function Budgets({ ledger, params }: PageProps) {
   const { budgets, categories, transactions } = ledger.state;
-  const now = currentMonth();
+  const { monthStartDay: startDay } = settingsOf(ledger.state);
+  const today = new Date();
+  const now = currentBudgetMonth(startDay, today);
+  const monthHref = (m: string) => routeHref('budgets', m === now ? {} : { month: m });
   const month = isMonthKey(params.month) ? params.month : now;
   const prev = addMonths(month, -1);
-  const today = new Date();
-  const elapsed = monthElapsed(month, today);
-  const rows = monthBudget({ budgets, categories, transactions }, month, today);
+  const period = budgetPeriod(month, startDay);
+  const elapsed = monthElapsed(month, today, startDay);
+  const rows = monthBudget({ budgets, categories, transactions }, month, today, startDay);
   const listed = new Set(rows.map((r) => r.categoryId));
   const unused = categories.filter((c) => !c.excludeFromSpend && !listed.has(c.id)).map((c) => c.name);
   const totals = monthTotals(rows);
@@ -53,6 +55,7 @@ export default function Budgets({ ledger, params }: PageProps) {
         <strong aria-live="polite">{fmtMonth(month, 'long')}</strong>
         <a className="btn ghost" href={monthHref(addMonths(month, 1))} aria-label={`Next month, ${fmtMonth(addMonths(month, 1), 'long')}`}>›</a>
         {month !== now && <a className="month-now" href={monthHref(now)}>This month</a>}
+        {startDay > 1 && <span className="muted">{fmtDate(period.from)} – {fmtDate(period.to)}</span>}
       </nav>
 
       <section className="card">
@@ -94,7 +97,7 @@ export default function Budgets({ ledger, params }: PageProps) {
                   {p && <span className={`tag ${p.cls}`} title={p.title}>{p.text}</span>}
                 </p>
                 <div className="row between budget-edit">
-                  <label className="limit">Budget $<input type="number" min={0} step={10} value={r.budgeted || ''} placeholder="0"
+                  <label className="limit">Budget {currencySymbol(displayCurrency())}<input type="number" min={0} step={10} value={r.budgeted || ''} placeholder="0"
                     onChange={(e) => ledger.setBudget(r.category, Number(e.target.value), month)} /></label>
                   <label className="check" title="Carry what is left (or overspent) into next month">
                     <input type="checkbox" checked={r.rollover} onChange={(e) => ledger.setRollover(r.category, e.target.checked, month)} />

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { BarChart, LineChart, Meter, PaceChart } from '../components/charts';
 import { fmtDate, fmtMoney, fmtMonth } from '../format';
-import { currentMonth, monthBudget, monthTotals, spendExclusions } from '../lib/budget';
+import { currentBudgetMonth, currentMonth, monthBudget, monthTotals, spendExclusions } from '../lib/budget';
 import { netWorth } from '../lib/accounts';
 import { monthRange, monthlySpend } from '../lib/insights';
 import {
@@ -10,6 +10,7 @@ import {
 } from '../lib/overview';
 import { recurringCharges, recurringSeries } from '../lib/recurring';
 import { routeHref } from '../lib/routes';
+import { settingsOf } from '../lib/settings';
 import { EMPTY_FILTERS, filtersHref } from '../lib/txFilters';
 import type { Ledger } from '../store';
 import EmptyState from './EmptyState';
@@ -24,7 +25,10 @@ export default function Dashboard({ ledger }: { ledger: Ledger }) {
   const today = new Date();
   const month = currentMonth(today);
   const excluded = spendExclusions(categories);
-  const totals = monthTotals(monthBudget({ budgets, categories, transactions }, month, today));
+  const { monthStartDay } = settingsOf(ledger.state);
+  // The budget card follows budget months, which may start mid-month; the rest of the page uses calendar months.
+  const budgetMonth = currentBudgetMonth(monthStartDay, today);
+  const totals = monthTotals(monthBudget({ budgets, categories, transactions }, budgetMonth, today, monthStartDay));
   const ratio = totals.available > 0 ? totals.spent / totals.available : totals.spent > 0 ? Infinity : 0;
   const pace = spendPace(transactions, month, excluded, today);
   const vsLast = pace.spent - pace.previousToDate;
