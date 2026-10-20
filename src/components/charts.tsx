@@ -73,8 +73,8 @@ export function BarChart({ bars, label, highlightLast, W = 440 }: { bars: Bar[];
   );
 }
 
-/** Single-series line chart with point markers and native tooltips. */
-export function LineChart({ points, label, W = 440 }: { points: { label: string; value: number }[]; label: string; W?: number }) {
+/** Single-series line chart with point markers and native tooltips; points with an `href` are links. */
+export function LineChart({ points, label, W = 440 }: { points: { label: string; value: number; href?: string }[]; label: string; W?: number }) {
   const max = Math.max(1, ...points.map((p) => p.value));
   const top = Math.ceil(max / niceStep(max / 4)) * niceStep(max / 4);
   const iw = W - PAD.left - PAD.right;
@@ -97,7 +97,9 @@ export function LineChart({ points, label, W = 440 }: { points: { label: string;
       {points.map((p, i) => (
         <g key={p.label}>
           <circle cx={x(i)} cy={y(p.value)} r={5} fill="var(--leaf)" stroke="var(--paper)" strokeWidth={2} />
-          <circle cx={x(i)} cy={y(p.value)} r={16} fill="transparent"><title>{`${p.label}: ${fmtMoney(p.value)}`}</title></circle>
+          {p.href
+            ? <a href={p.href} aria-label={`${p.label}: ${fmtMoney(p.value)}`}><circle cx={x(i)} cy={y(p.value)} r={16} className="hit"><title>{`${p.label}: ${fmtMoney(p.value)}`}</title></circle></a>
+            : <circle cx={x(i)} cy={y(p.value)} r={16} fill="transparent"><title>{`${p.label}: ${fmtMoney(p.value)}`}</title></circle>}
           <text x={x(i)} y={H - 8} className="axis" textAnchor="middle">{p.label}</text>
         </g>
       ))}
@@ -150,6 +152,43 @@ export function PaceChart({ current, previous, budget, label, W = 440 }: {
           <circle cx={x(last)} cy={y(current[last - 1])} r={5} fill="var(--leaf)" stroke="var(--paper)" strokeWidth={2}>
             <title>{`Day ${last}: ${fmtMoney(current[last - 1])}`}</title>
           </circle>
+        </>
+      )}
+    </svg>
+  );
+}
+
+export interface Slice {
+  key: string;
+  value: number;
+  /** Where clicking the slice goes. */
+  href?: string;
+}
+
+/** Donut of shares (colored by category) with the total in the middle; slices with an `href` are links. */
+export function DonutChart({ slices, label, center }: { slices: Slice[]; label: string; center?: string }) {
+  const S = 220, R = 100, r = 64, c = S / 2;
+  const sum = slices.reduce((a, s) => a + Math.max(0, s.value), 0);
+  const point = (a: number, rad: number) => `${c + rad * Math.sin(a)},${c - rad * Math.cos(a)}`;
+  let acc = 0;
+  return (
+    <svg viewBox={`0 0 ${S} ${S}`} className="chart donut" role="img" aria-label={label}>
+      {sum <= 0 && <circle cx={c} cy={c} r={(R + r) / 2} fill="none" stroke="var(--color-track)" strokeWidth={R - r} />}
+      {sum > 0 && slices.filter((s) => s.value > 0).map((s) => {
+        const a0 = (acc / sum) * 2 * Math.PI;
+        acc += s.value;
+        // A full circle can't be one arc; stop just short of it.
+        const a1 = Math.min((acc / sum) * 2 * Math.PI, a0 + 2 * Math.PI - 1e-4);
+        const big = a1 - a0 > Math.PI ? 1 : 0;
+        const d = `M${point(a0, R)}A${R},${R} 0 ${big} 1 ${point(a1, R)}L${point(a1, r)}A${r},${r} 0 ${big} 0 ${point(a0, r)}Z`;
+        const tip = `${s.key}: ${fmtMoney(s.value)} · ${Math.round((s.value / sum) * 100)}%`;
+        const path = <path d={d} fill={categoryColor(s.key)} stroke="var(--card)" strokeWidth={2} strokeLinejoin="round"><title>{tip}</title></path>;
+        return s.href ? <a key={s.key} href={s.href} aria-label={tip} className="slice">{path}</a> : <g key={s.key} className="slice">{path}</g>;
+      })}
+      {center && (
+        <>
+          <text x={c} y={c + 2} className="donut-total" textAnchor="middle" dominantBaseline="middle">{center}</text>
+          <text x={c} y={c + 24} className="axis" textAnchor="middle">spent</text>
         </>
       )}
     </svg>
