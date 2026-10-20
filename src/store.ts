@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPersister, loadLedger, openRepository, type Persister, type Repository } from './db';
+import {
+  createPersister, demoCounts, loadLedger, openRepository, withoutDemo, type Persister, type Repository,
+} from './db';
 import { currentMonth, upsertBudget } from './lib/budget';
 import { ensureCategory } from './lib/categories';
 import { emptyLedger } from './lib/migrate';
@@ -87,6 +89,28 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
     return { added, updated, received };
   }, []);
 
+  /**
+   * Remove demo accounts, transactions and balance snapshots, leaving imported data alone.
+   * Written to storage in one transaction before the ledger updates; throws and changes
+   * nothing if the write fails. Resolves to how much was removed.
+   */
+  const clearDemo = useCallback(async () => {
+    const prev = latest.current;
+    const removed = demoCounts(prev);
+    const next = withoutDemo(prev);
+    if (next === prev) return removed;
+    try {
+      await persister.current?.commit(next);
+    } catch (e) {
+      persister.current?.schedule(latest.current);
+      throw new Error('Demo data could not be removed; nothing was changed.', { cause: e });
+    }
+    const merge = (s: LedgerState) => (s === prev ? next : withoutDemo(s));
+    latest.current = merge(latest.current);
+    setState(merge);
+    return removed;
+  }, []);
+
   const setCategory = useCallback((id: string, category: string) =>
     setState((s) => {
       const categories = [...s.categories];
@@ -104,7 +128,7 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
 
   const reset = useCallback(() => setState(emptyLedger()), []);
 
-  return { state, loading, error, runSync, setCategory, setBudget, reset };
+  return { state, loading, error, runSync, clearDemo, setCategory, setBudget, reset };
 }
 
 export type Ledger = ReturnType<typeof useLedger>;
