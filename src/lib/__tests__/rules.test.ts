@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { emptyLedger } from '../migrate';
 import {
-  applyRules, applyRulesToLedger, findRule, hasConditions, isMerchantOnly, isValidRegex, moveRule, newRuleId,
-  normalizeRule, previewRules, removeRule, ruleMatches, upsertRule, validateRule,
+  applyRules, applyRulesToLedger, countMatches, describeConditions, draftToRule, emptyRuleDraft, findRule, hasConditions,
+  isMerchantOnly, isValidRegex, moveRule, newRuleId, normalizeRule, previewRules, removeRule, ruleMatches, ruleToDraft,
+  upsertRule, validateRule, type RuleDraft,
 } from '../rules';
 import type { LedgerState, Rule, Transaction } from '../types';
 
@@ -214,5 +215,62 @@ describe('rule helpers', () => {
       .toEqual({ id: 'r', categoryId: 'dining', amountMax: -1 });
     expect(normalizeRule({ id: 'r', categoryId: 'gone', merchant: 'a' }, known)).toBeUndefined();
     expect(normalizeRule(null, known)).toBeUndefined();
+  });
+});
+
+describe('rule editor drafts', () => {
+  const { categories } = emptyLedger('2026-10');
+  const draft = (over: Partial<RuleDraft>): RuleDraft => ({ ...emptyRuleDraft('dining'), ...over });
+
+  it('builds a rule from the editor fields', () => {
+    expect(draftToRule(draft({
+      descriptionOp: 'regex', description: ' ^sq ', merchantOp: 'contains', merchant: 'cafe',
+      amountOp: 'range', amount: '-50', amountMax: '', accountId: 'card', renameMerchant: ' Cafe ',
+    }), 'r1', categories)).toEqual({
+      rule: {
+        id: 'r1', categoryId: 'dining', descriptionRegex: '^sq', merchantContains: 'cafe', amountMin: -50,
+        accountId: 'card', renameMerchant: 'Cafe',
+      },
+    });
+    expect(draftToRule(draft({ descriptionOp: 'any', merchantOp: 'is', merchant: 'Cafe', amountOp: 'equals', amount: '-$1,650' }), 'r', categories))
+      .toEqual({ rule: { id: 'r', categoryId: 'dining', merchant: 'Cafe', amountEquals: -1650 } });
+  });
+
+  it('explains missing or invalid input', () => {
+    expect(draftToRule(draft({ description: ' ' }), 'r', categories).error).toMatch(/description text/);
+    expect(draftToRule(draft({ descriptionOp: 'any', merchantOp: 'regex', merchant: '' }), 'r', categories).error).toMatch(/merchant text/);
+    expect(draftToRule(draft({ description: 'x', amountOp: 'equals' }), 'r', categories).error).toMatch(/amount/);
+    expect(draftToRule(draft({ description: 'x', amountOp: 'range' }), 'r', categories).error).toMatch(/minimum or maximum/);
+    expect(draftToRule(draft({ description: 'x', amountOp: 'equals', amount: 'abc' }), 'r', categories).error).toMatch(/numbers/);
+    expect(draftToRule(draft({ descriptionOp: 'regex', description: '(' }), 'r', categories).error).toMatch(/regular expression/);
+    expect(draftToRule(draft({ descriptionOp: 'any' }), 'r', categories).error).toMatch(/condition/);
+    expect(draftToRule(draft({ description: 'x', categoryId: '' }), 'r', categories).error).toMatch(/category/);
+  });
+
+  it('round-trips rules through the editor', () => {
+    const rules: Rule[] = [
+      rule('a', { descriptionContains: 'amzn', amountMin: -100, amountMax: -5, renameMerchant: 'Amazon' }),
+      rule('b', { merchantRegex: '^uber', accountId: 'card' }),
+      rule('c', { merchant: 'Cafe', amountEquals: -4.5 }),
+      rule('d', { amountMax: 0 }),
+    ];
+    for (const r of rules) expect(draftToRule(ruleToDraft(r), r.id, categories)).toEqual({ rule: r });
+  });
+});
+
+describe('describeConditions', () => {
+  it('describes every condition in words', () => {
+    expect(describeConditions(rule('r', {
+      descriptionContains: 'amzn', merchantRegex: '^a', amountMin: -100, amountMax: -5.5, accountId: 'card',
+    }), (id) => `#${id}`)).toEqual([
+      'description contains “amzn”', 'merchant matches /^a/', 'amount between −$100 and −$5.50', 'account is #card',
+    ]);
+    expect(describeConditions(rule('r', { merchant: 'Cafe', amountEquals: 12 }))).toEqual(['merchant is “Cafe”', 'amount is $12']);
+    expect(describeConditions(rule('r', { amountMin: 0 }))).toEqual(['amount at least $0']);
+    expect(describeConditions(rule('r', { amountMax: -1 }))).toEqual(['amount at most −$1']);
+  });
+
+  it('counts matching transactions', () => {
+    expect(countMatches(rule('r', { descriptionContains: 'a' }), [tx('a'), tx('ab'), tx('c')])).toBe(2);
   });
 });
