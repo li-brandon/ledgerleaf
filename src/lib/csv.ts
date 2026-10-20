@@ -75,6 +75,27 @@ export function parseAmount(raw: string): number | null {
 export const slug = (s: string) =>
   s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'imported';
 
+/**
+ * Content-hash ids for CSV rows: the row's date, description, amount and account plus how
+ * many identical rows came before it in the file. Re-importing a file gives the same ids,
+ * so dedupe applies, while genuine same-day repeats are kept apart.
+ */
+export function contentIds() {
+  const occurrences = new Map<string, number>();
+  return (date: string, description: string, amount: number, accountId: string) => {
+    const key = [date, description.toLowerCase(), amount.toFixed(2), accountId].join('|');
+    const n = occurrences.get(key) ?? 0;
+    occurrences.set(key, n + 1);
+    return hashId(`${key}#${n}`);
+  };
+}
+
+/** Serialise rows as CSV, quoting cells that contain commas, quotes or line breaks. */
+export function toCsv(rows: string[][]): string {
+  const cell = (v: string) => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  return rows.map((r) => r.map(cell).join(',')).join('\r\n') + '\r\n';
+}
+
 export interface CsvParseResult {
   accounts: Account[];
   transactions: Transaction[];
@@ -97,7 +118,7 @@ export function parseTransactionsCsv(text: string): CsvParseResult {
   }
   const accounts = new Map<string, Account>();
   const transactions: Transaction[] = [];
-  const occurrences = new Map<string, number>();
+  const idFor = contentIds();
   let skipped = 0;
   for (const r of rows) {
     const get = (c: (typeof COLUMNS)[number]) => (idx[c] >= 0 ? (r[idx[c]] ?? '').trim() : '');
@@ -108,10 +129,7 @@ export function parseTransactionsCsv(text: string): CsvParseResult {
     const accountName = get('account') || 'Imported';
     const accountId = `csv-${slug(accountName)}`;
     if (!accounts.has(accountId)) accounts.set(accountId, { id: accountId, name: accountName, type: 'checking' });
-    const key = [date, description.toLowerCase(), amount.toFixed(2), accountId].join('|');
-    const n = occurrences.get(key) ?? 0;
-    occurrences.set(key, n + 1);
-    const externalId = hashId(`${key}#${n}`);
+    const externalId = idFor(date, description, amount, accountId);
     transactions.push({
       id: `csv-${externalId}`,
       externalId,

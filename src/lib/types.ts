@@ -84,6 +84,22 @@ export interface ProviderSyncState {
   lastSync: string;
 }
 
+/**
+ * Which CSV columns (by header name) hold each transaction field. Amounts come from one
+ * signed `amount` column, or from separate `debit` (money out) and `credit` (money in)
+ * columns when `amount` is unset.
+ */
+export interface CsvMapping {
+  date: string;
+  description: string;
+  amount?: string;
+  debit?: string;
+  credit?: string;
+  category?: string;
+  /** The file shows spending as positive (common on card statements): flip every sign. */
+  negate?: boolean;
+}
+
 export const SCHEMA_VERSION = 2;
 
 export interface LedgerState {
@@ -98,6 +114,8 @@ export interface LedgerState {
   lastSync?: string;
   /** Per-provider sync state, keyed by provider id. */
   syncs?: Record<string, ProviderSyncState>;
+  /** Column mapping last used to import a CSV into each account, keyed by account id. */
+  importMappings?: Record<string, CsvMapping>;
 }
 
 export const CATEGORIES = [
