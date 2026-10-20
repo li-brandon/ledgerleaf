@@ -6,7 +6,7 @@ import {
   syncBalances,
   type SyncProvider, type SyncResult,
 } from '../sync';
-import type { Account, LedgerState, Transaction } from '../types';
+import type { Account, LedgerState, Rule, Transaction } from '../types';
 
 const now = new Date(2026, 9, 20);
 
@@ -245,6 +245,51 @@ describe('edits through the ledger and new imports', () => {
     const { state } = await syncOnce(kept, p);
     expect(state.transactions.find((t) => t.id === 'Cafe 2')).toMatchObject({ category: 'Dining', categoryId: 'dining', reviewed: false });
     expect(state.transactions.find((t) => t.id === 'Cafe 1')).toMatchObject({ category: 'Travel', reviewed: true });
+  });
+});
+
+describe('rules on import and sync', () => {
+  const rules: Rule[] = [
+    { id: 'fresh', categoryId: 'groceries', descriptionRegex: '^amzn.*fresh', renameMerchant: 'Amazon Fresh' },
+    { id: 'amzn', categoryId: 'shopping', merchantContains: 'amzn', renameMerchant: 'Amazon' },
+    { id: 'rent', categoryId: 'rent', amountEquals: -1650, accountId: 'a1' },
+  ];
+
+  it('applies the first matching rule to new provider transactions', async () => {
+    const p = fixedProvider({
+      accounts: [account, { id: 'a2', name: 'Savings', type: 'savings' }],
+      transactions: [
+        tx('t1', { description: 'AMZN Mktp US' }),
+        tx('t2', { description: 'AMZN FRESH 42' }),
+        tx('t3', { description: 'Landlord', amount: -1650 }),
+        tx('t4', { description: 'Landlord', amount: -1650, accountId: 'a2' }),
+      ],
+    });
+    const { state } = await syncOnce({ ...emptyLedger('2026-10'), rules }, p);
+    const by = (id: string) => state.transactions.find((t) => t.id === id)!;
+    expect(by('t1')).toMatchObject({ category: 'Shopping', merchant: 'Amazon', reviewed: false });
+    expect(by('t2')).toMatchObject({ category: 'Groceries', merchant: 'Amazon Fresh' });
+    expect(by('t3')).toMatchObject({ category: 'Rent', merchant: 'Landlord' });
+    expect(by('t4')).toMatchObject({ category: 'Other', merchant: 'Landlord' });
+  });
+
+  it('applies rules to CSV rows, over the file\'s own category', async () => {
+    const csv = new CsvImportProvider(
+      'date,description,amount,category\n2026-10-01,AMZN Mktp,-30,Gifts\n2026-10-02,Tea,-3,Dining',
+      { accountId: 'a1', mapping: { date: 'date', description: 'description', amount: 'amount', category: 'category' } },
+    );
+    const { state } = await syncOnce({ ...emptyLedger('2026-10'), accounts: [account], rules }, csv);
+    expect(state.transactions.map((t) => [t.description, t.category, t.merchant])).toEqual([
+      ['Tea', 'Dining', 'Tea'],
+      ['AMZN Mktp', 'Shopping', 'Amazon'],
+    ]);
+  });
+
+  it('never changes transactions already in the ledger on a re-sync', async () => {
+    const p = fixedProvider({ accounts: [account], transactions: [tx('t1', { description: 'AMZN Mktp' })] });
+    const { state } = await syncOnce(emptyLedger('2026-10'), p);
+    const again = await syncOnce({ ...state, rules }, p);
+    expect(again.state.transactions[0]).toMatchObject({ category: 'Other', merchant: 'AMZN Mktp' });
   });
 });
 
