@@ -1,7 +1,8 @@
 import { budgetId, currentMonth } from './budget';
 import { defaultCategories, ensureCategory, findCategory } from './categories';
+import { normalizeRule } from './rules';
 import {
-  SCHEMA_VERSION, type Account, type Budget, type Budgets, type Category, type CsvMapping, type LedgerState,
+  NON_SPEND, SCHEMA_VERSION, type Account, type Budget, type Budgets, type Category, type CsvMapping, type LedgerState,
   type Transaction,
 } from './types';
 
@@ -39,6 +40,35 @@ function normalizeMapping(v: unknown): CsvMapping | undefined {
   return out;
 }
 
+/**
+ * A stored category with every field filled in; undefined when it has no id. Categories
+ * saved before the flag existed are excluded from spending if they are Income or Transfer.
+ */
+function normalizeCategory(v: unknown): Category | undefined {
+  if (!isObject(v) || typeof v.id !== 'string' || !v.id) return undefined;
+  const name = typeof v.name === 'string' && v.name.trim() ? v.name : v.id;
+  const text = (x: unknown, fallback: string) => (typeof x === 'string' && x.trim() ? x : fallback);
+  return {
+    id: v.id,
+    name,
+    group: text(v.group, 'Custom'),
+    color: text(v.color, '#a0a4ab'),
+    icon: text(v.icon, '•'),
+    excludeFromSpend: typeof v.excludeFromSpend === 'boolean' ? v.excludeFromSpend : NON_SPEND.has(name),
+  };
+}
+
+function normalizeCategories(v: unknown): Category[] {
+  const seen = new Set<string>();
+  const out = list<unknown>(v).flatMap((c) => {
+    const cat = normalizeCategory(c);
+    if (!cat || seen.has(cat.id)) return [];
+    seen.add(cat.id);
+    return [cat];
+  });
+  return out.length ? out : defaultCategories();
+}
+
 function normalizeAccount(a: Account): Account {
   return { ...a, currency: a.currency ?? 'USD', hidden: a.hidden ?? false };
 }
@@ -52,6 +82,9 @@ function normalizeTransaction(t: Transaction, categories: Category[]): Transacti
     merchant: t.merchant ?? t.description,
     reviewed: t.reviewed ?? false,
   };
+  // Edit flags are only ever stored as true.
+  if (out.categoryEdited !== true) delete out.categoryEdited;
+  if (out.merchantEdited !== true) delete out.merchantEdited;
   const source = t.source ?? sourceFromId(t.id);
   if (source) out.source = source;
   return out;
@@ -59,17 +92,21 @@ function normalizeTransaction(t: Transaction, categories: Category[]): Transacti
 
 /**
  * Fill v2 defaults and make sure every transaction has a categoryId that exists in
- * `categories` (unknown names become custom categories). Pure and idempotent.
+ * `categories` (unknown names become custom categories). Categories gain any missing
+ * fields and rules keep only well-formed conditions; rules pointing at a category that no
+ * longer exists are dropped. Pure and idempotent.
  */
 export function normalizeLedger(s: Partial<LedgerState>): LedgerState {
-  const categories = s.categories?.length ? s.categories.map((c) => ({ ...c })) : defaultCategories();
+  const categories = normalizeCategories(s.categories);
   const transactions = list<Transaction>(s.transactions).map((t) => normalizeTransaction(t, categories));
+  const categoryIds = new Set(categories.map((c) => c.id));
+  const rules = list<unknown>(s.rules).flatMap((r) => normalizeRule(r, categoryIds) ?? []);
   const out: LedgerState = {
     version: SCHEMA_VERSION,
     accounts: list<Account>(s.accounts).map(normalizeAccount),
     transactions,
     categories,
-    rules: list(s.rules),
+    rules,
     budgets: list(s.budgets),
     balanceSnapshots: list(s.balanceSnapshots),
   };
