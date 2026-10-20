@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { BarChart, Legend, LineChart, OTHER, chartCategory } from '../components/charts';
 import { fmtMoney, fmtMonth } from '../format';
-import { currentMonth } from '../lib/budget';
+import { currentMonth, spendExclusions } from '../lib/budget';
 import { monthRange, monthlySpend, rankCategories, topMerchants } from '../lib/insights';
 import type { Ledger } from '../store';
 import EmptyState from './EmptyState';
@@ -9,19 +9,20 @@ import EmptyState from './EmptyState';
 const RANGES = [3, 4, 6, 12];
 
 export default function Insights({ ledger }: { ledger: Ledger }) {
-  const { transactions } = ledger.state;
+  const { transactions, categories } = ledger.state;
   const [n, setN] = useState(4);
   if (!transactions.length) return <><h1>Insights</h1><EmptyState ledger={ledger} /></>;
 
   const months = monthRange(currentMonth(), n);
-  const rows = monthlySpend(transactions, months);
+  const excluded = spendExclusions(categories);
+  const rows = monthlySpend(transactions, months, excluded);
   const folded = rows.map((r) => {
     const by: Record<string, number> = {};
     for (const [c, v] of Object.entries(r.byCategory)) by[chartCategory(c)] = (by[chartCategory(c)] ?? 0) + v;
     return { ...r, byCategory: by };
   });
   const keys = rankCategories(folded).sort((a, b) => (a === OTHER ? 1 : b === OTHER ? -1 : 0));
-  const merchants = topMerchants(transactions, 8, months);
+  const merchants = topMerchants(transactions, 8, months, excluded);
   const maxM = merchants[0]?.total ?? 1;
 
   return (

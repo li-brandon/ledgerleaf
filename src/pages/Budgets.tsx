@@ -1,6 +1,6 @@
 import { Meter } from '../components/charts';
 import { fmtMoney, fmtMonth } from '../format';
-import { budgetProgress, budgetTotals, budgetsForMonth, currentMonth } from '../lib/budget';
+import { budgetProgress, budgetTotals, budgetsForMonth, currentMonth, spendExclusions } from '../lib/budget';
 import type { Ledger } from '../store';
 
 const STATUS_LABEL = { ok: 'On track', near: 'Close to limit', over: 'Over' };
@@ -8,7 +8,7 @@ const STATUS_LABEL = { ok: 'On track', near: 'Close to limit', over: 'Over' };
 export default function Budgets({ ledger }: { ledger: Ledger }) {
   const { budgets, categories, transactions } = ledger.state;
   const month = currentMonth();
-  const lines = budgetProgress(budgetsForMonth(budgets, categories, month), transactions, month);
+  const lines = budgetProgress(budgetsForMonth(budgets, categories, month), transactions, month, spendExclusions(categories));
   const listed = new Set(lines.map((l) => l.category));
   const unused = categories.filter((c) => !c.excludeFromSpend && !listed.has(c.name)).map((c) => c.name);
   const totals = budgetTotals(lines);

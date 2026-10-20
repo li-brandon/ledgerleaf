@@ -1,4 +1,4 @@
-import { isSpend, monthKey, round } from './budget';
+import { DEFAULT_EXCLUSIONS, isSpend, monthKey, round, type SpendExclusions } from './budget';
 import type { Account, BalanceSnapshot, Transaction } from './types';
 
 export interface MonthSpend {
@@ -16,12 +16,15 @@ export function monthRange(month: string, n: number): string[] {
   });
 }
 
-/** Gross spend per month and category for the given months (missing months are zero). */
-export function monthlySpend(txns: Transaction[], months: string[]): MonthSpend[] {
+/**
+ * Gross spend per month and category for the given months (missing months are zero).
+ * Categories in `excluded` are left out.
+ */
+export function monthlySpend(txns: Transaction[], months: string[], excluded: SpendExclusions = DEFAULT_EXCLUSIONS): MonthSpend[] {
   const map = new Map(months.map((m) => [m, { month: m, total: 0, byCategory: {} as Record<string, number> }]));
   for (const t of txns) {
     const row = map.get(monthKey(t.date));
-    if (!row || !isSpend(t)) continue;
+    if (!row || !isSpend(t, excluded)) continue;
     row.total = round(row.total - t.amount);
     row.byCategory[t.category] = round((row.byCategory[t.category] ?? 0) - t.amount);
   }
@@ -41,14 +44,18 @@ export interface Merchant {
   count: number;
 }
 
-export function topMerchants(txns: Transaction[], limit = 5, months?: string[]): Merchant[] {
+/** Biggest merchants by spend (renamed merchants are grouped under their new name). */
+export function topMerchants(
+  txns: Transaction[], limit = 5, months?: string[], excluded: SpendExclusions = DEFAULT_EXCLUSIONS,
+): Merchant[] {
   const by = new Map<string, Merchant>();
   for (const t of txns) {
-    if (!isSpend(t) || (months && !months.includes(monthKey(t.date)))) continue;
-    const m = by.get(t.description) ?? { name: t.description, total: 0, count: 0 };
+    if (!isSpend(t, excluded) || (months && !months.includes(monthKey(t.date)))) continue;
+    const name = t.merchant ?? t.description;
+    const m = by.get(name) ?? { name, total: 0, count: 0 };
     m.total = round(m.total - t.amount);
     m.count++;
-    by.set(t.description, m);
+    by.set(name, m);
   }
   return [...by.values()].sort((a, b) => b.total - a.total).slice(0, limit);
 }
