@@ -1,0 +1,100 @@
+import { hashId } from './sync/hash';
+import type { Account, Transaction } from './types';
+
+/** Split CSV text into rows of cells. Handles quoted fields, escaped quotes and CRLF. */
+export function parseCsvRows(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (c === '"') quoted = false;
+      else cell += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ',') { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); rows.push(row); row = []; cell = '';
+    } else cell += c;
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter((r) => r.some((x) => x.trim() !== ''));
+}
+
+/** Accepts YYYY-MM-DD or M/D/YYYY; returns YYYY-MM-DD or null. */
+export function normalizeDate(raw: string): string | null {
+  const s = raw.trim();
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  if (m) return fmt(+m[1], +m[2], +m[3]);
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
+  if (m) return fmt(+m[3], +m[1], +m[2]);
+  return null;
+}
+
+function fmt(y: number, mo: number, d: number): string | null {
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  return dt.toISOString().slice(0, 10);
+}
+
+/** Parses "$1,234.50", "-12", "(45.00)". Returns null if not numeric. */
+export function parseAmount(raw: string): number | null {
+  let s = raw.trim().replace(/[$,\s]/g, '');
+  const neg = /^\(.*\)$/.test(s);
+  if (neg) s = s.slice(1, -1);
+  if (!/^[-+]?\d*\.?\d+$/.test(s)) return null;
+  const n = Number(s);
+  return neg ? -n : n;
+}
+
+export const slug = (s: string) =>
+  s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'imported';
+
+export interface CsvParseResult {
+  accounts: Account[];
+  transactions: Transaction[];
+  skipped: number;
+}
+
+const COLUMNS = ['date', 'description', 'amount', 'category', 'account'] as const;
+
+/**
+ * Parse CSV with columns date,description,amount,category,account (header optional,
+ * header order respected). Ids hash the row content plus its occurrence index, so
+ * re-importing the same file dedupes while genuine same-day repeats are kept.
+ */
+export function parseTransactionsCsv(text: string): CsvParseResult {
+  const rows = parseCsvRows(text);
+  let idx: Record<(typeof COLUMNS)[number], number> = { date: 0, description: 1, amount: 2, category: 3, account: 4 };
+  if (rows[0] && rows[0].map((h) => h.trim().toLowerCase()).includes('date')) {
+    const header = rows.shift()!.map((h) => h.trim().toLowerCase());
+    idx = Object.fromEntries(COLUMNS.map((c) => [c, header.indexOf(c)])) as typeof idx;
+  }
+  const accounts = new Map<string, Account>();
+  const transactions: Transaction[] = [];
+  const occurrences = new Map<string, number>();
+  let skipped = 0;
+  for (const r of rows) {
+    const get = (c: (typeof COLUMNS)[number]) => (idx[c] >= 0 ? (r[idx[c]] ?? '').trim() : '');
+    const date = normalizeDate(get('date'));
+    const amount = parseAmount(get('amount'));
+    const description = get('description');
+    if (!date || amount === null || !description) { skipped++; continue; }
+    const accountName = get('account') || 'Imported';
+    const accountId = `csv-${slug(accountName)}`;
+    if (!accounts.has(accountId)) accounts.set(accountId, { id: accountId, name: accountName, type: 'checking' });
+    const key = [date, description.toLowerCase(), amount.toFixed(2), accountId].join('|');
+    const n = occurrences.get(key) ?? 0;
+    occurrences.set(key, n + 1);
+    transactions.push({
+      id: `csv-${hashId(`${key}#${n}`)}`,
+      date, description, amount,
+      category: get('category') || 'Other',
+      accountId,
+    });
+  }
+  return { accounts: [...accounts.values()], transactions, skipped };
+}
