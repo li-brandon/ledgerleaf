@@ -11,6 +11,8 @@ export interface Account {
   currency?: string;
   /** Hidden accounts are kept but excluded from views. */
   hidden?: boolean;
+  /** The user renamed the account; a re-sync keeps their name. */
+  renamed?: boolean;
   /** Provider id that created this account, e.g. 'demo' or 'csv'. */
   source?: string;
 }
