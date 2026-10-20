@@ -1,29 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { currentMonth, upsertBudget } from './lib/budget';
+import { ensureCategory } from './lib/categories';
+import { V1_KEY, V2_KEY, emptyLedger, migrate, normalizeLedger } from './lib/migrate';
 import { mergeSync, type SyncProvider } from './lib/sync';
-import type { Account, Budgets, Transaction } from './lib/types';
+import type { LedgerState } from './lib/types';
 
-export interface LedgerState {
-  accounts: Account[];
-  transactions: Transaction[];
-  budgets: Budgets;
-  lastSync?: string;
-}
+export type { LedgerState };
 
-const KEY = 'ledgerleaf:v1';
-
-const DEFAULT_BUDGETS: Budgets = {
-  Rent: 1650, Groceries: 500, Dining: 300, Shopping: 250, Transport: 150,
-  Utilities: 150, Entertainment: 80, Health: 60,
-};
-
-const empty = (): LedgerState => ({ accounts: [], transactions: [], budgets: { ...DEFAULT_BUDGETS } });
-
+/** Read v2, else migrate the v1 save (left in place as a backup), else start empty. */
 function load(): LedgerState {
   try {
-    const raw = localStorage.getItem(KEY);
-    return raw ? { ...empty(), ...JSON.parse(raw) } : empty();
+    const raw = localStorage.getItem(V2_KEY) ?? localStorage.getItem(V1_KEY);
+    return raw ? migrate(JSON.parse(raw)) : emptyLedger();
   } catch {
-    return empty();
+    return emptyLedger();
   }
 }
 
@@ -32,25 +22,35 @@ export function useLedger() {
   const latest = useRef(state);
   useEffect(() => {
     latest.current = state;
-    localStorage.setItem(KEY, JSON.stringify(state));
+    localStorage.setItem(V2_KEY, JSON.stringify(state));
   }, [state]);
 
   const runSync = useCallback(async (provider: SyncProvider) => {
     const incoming = await provider.sync();
-    const { added, accounts, transactions } = mergeSync(latest.current, incoming);
-    const next = { ...latest.current, accounts, transactions, lastSync: new Date().toISOString() };
+    const tagged = incoming.transactions.map((t) => ({ ...t, source: t.source ?? provider.id }));
+    const { added, accounts, transactions } = mergeSync(latest.current, { ...incoming, transactions: tagged });
+    const next = normalizeLedger({ ...latest.current, accounts, transactions, lastSync: new Date().toISOString() });
     latest.current = next;
     setState(next);
     return { added, received: incoming.transactions.length };
   }, []);
 
   const setCategory = useCallback((id: string, category: string) =>
-    setState((s) => ({ ...s, transactions: s.transactions.map((t) => (t.id === id ? { ...t, category } : t)) })), []);
+    setState((s) => {
+      const categories = [...s.categories];
+      const cat = ensureCategory(categories, category);
+      const transactions = s.transactions.map((t) => (t.id === id ? { ...t, category: cat.name, categoryId: cat.id } : t));
+      return { ...s, categories, transactions };
+    }), []);
 
   const setBudget = useCallback((category: string, amount: number) =>
-    setState((s) => ({ ...s, budgets: { ...s.budgets, [category]: Math.max(0, amount || 0) } })), []);
+    setState((s) => {
+      const categories = [...s.categories];
+      const cat = ensureCategory(categories, category);
+      return { ...s, categories, budgets: upsertBudget(s.budgets, cat.id, currentMonth(), Math.max(0, amount || 0)) };
+    }), []);
 
-  const reset = useCallback(() => setState(empty()), []);
+  const reset = useCallback(() => setState(emptyLedger()), []);
 
   return { state, runSync, setCategory, setBudget, reset };
 }
