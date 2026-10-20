@@ -179,3 +179,25 @@ describe('spendHref', () => {
     expect(txns.filter(match)).toHaveLength(2);
   });
 });
+
+describe('insights edge cases', () => {
+  it('compares a first month of spending with nothing before it', () => {
+    const { rows, total } = monthOverMonth([tx('2026-10-03', -40, 'Dining')], '2026-10');
+    expect(rows).toEqual([expect.objectContaining({ category: 'Dining', current: 40, previous: 0, average: 0 })]);
+    expect(total).toMatchObject({ current: 40, previous: 0, average: 0 });
+    expect(pctChange(total.current, total.previous)).toBeNull();
+  });
+  it('counts gross spend: a refund does not reduce its category', () => {
+    const rows = monthlySpend([
+      tx('2026-10-01', -30, 'Shopping'), tx('2026-10-09', 50, 'Shopping'), tx('2026-10-02', -10, 'Dining'),
+    ], ['2026-10']);
+    expect(rows[0]).toMatchObject({ total: 40, byCategory: { Shopping: 30, Dining: 10 } });
+    expect(categoryShares(rows)).toEqual([
+      { category: 'Shopping', total: 30, share: 0.75 },
+      { category: 'Dining', total: 10, share: 0.25 },
+    ]);
+  });
+  it('spans one month for a single-month range', () => {
+    expect(monthsSpan(['2024-02'])).toEqual({ from: '2024-02-01', to: '2024-02-29' });
+  });
+});

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { groupAccounts, isLiability, netWorth, renameAccount, setAccountHidden } from '../accounts';
-import type { Account, Transaction } from '../types';
+import { netWorthByMonth } from '../insights';
+import type { Account, BalanceSnapshot, Transaction } from '../types';
 
 const tx = (id: string, accountId: string, amount: number): Transaction =>
   ({ id, date: '2026-10-01', description: id, amount, category: 'Other', accountId });
@@ -90,4 +91,54 @@ describe('setAccountHidden', () => {
     expect(setAccountHidden(accounts, 'chk', false)).toBe(accounts);
     expect(setAccountHidden(accounts, 'nope', true)).toBe(accounts);
   });
+});
+
+describe('net worth edge cases', () => {
+  it('is zero with no accounts', () => {
+    expect(netWorth([], [])).toEqual({ assets: 0, liabilities: 0, netWorth: 0 });
+  });
+  it('can be negative when debts exceed assets', () => {
+    const r = netWorth([
+      { id: 'c', name: 'Checking', type: 'checking', balance: 1200.1 },
+      { id: 's', name: 'Student loan', type: 'loan', balance: -20000.2 },
+      { id: 'k', name: 'Card', type: 'credit' },
+    ], [tx('k1', 'k', -300.05), tx('k2', 'k', -0.1)]);
+    expect(r).toEqual({ assets: 1200.1, liabilities: 20300.35, netWorth: -19100.25 });
+  });
+  it('counts an overdrawn checking account against assets', () => {
+    expect(netWorth([{ id: 'c', name: 'Checking', type: 'checking' }], [tx('o', 'c', -50)]))
+      .toEqual({ assets: -50, liabilities: 0, netWorth: -50 });
+  });
+  it('rounds away floating point noise', () => {
+    const r = netWorth([{ id: 'c', name: 'Checking', type: 'checking' }], [tx('a', 'c', 0.1), tx('b', 'c', 0.2)]);
+    expect(r.netWorth).toBe(0.3);
+  });
+});
+
+describe('netWorthByMonth', () => {
+  const snap = (accountId: string, date: string, balance: number): BalanceSnapshot => ({ accountId, date, balance });
+  const accts: Account[] = [
+    { id: 'chk', name: 'Checking', type: 'checking' },
+    { id: 'card', name: 'Card', type: 'credit' },
+    { id: 'old', name: 'Old', type: 'savings', hidden: true },
+  ];
+  it('takes each account’s latest snapshot per month and carries it forward', () => {
+    const points = netWorthByMonth(accts, [
+      snap('chk', '2026-08-31', 1000),
+      snap('card', '2026-08-15', -200),
+      snap('chk', '2026-09-30', 1500),
+      snap('card', '2026-10-01', -50),
+      snap('chk', '2026-08-01', 900),
+    ]);
+    expect(points).toEqual([
+      { month: '2026-08', total: 800 },
+      { month: '2026-09', total: 1300 },
+      { month: '2026-10', total: 1450 },
+    ]);
+  });
+  it('leaves out hidden and unknown accounts', () => {
+    expect(netWorthByMonth(accts, [snap('old', '2026-08-01', 5000), snap('gone', '2026-08-01', 1), snap('chk', '2026-08-02', 10)]))
+      .toEqual([{ month: '2026-08', total: 10 }]);
+  });
+  it('is empty without snapshots', () => expect(netWorthByMonth(accts, [])).toEqual([]));
 });

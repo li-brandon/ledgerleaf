@@ -283,3 +283,52 @@ describe('stored settings', () => {
     expect((await readLedger(repo))?.recurring).toEqual(next.recurring);
   });
 });
+
+describe('recurring edge cases', () => {
+  it('keeps a month-end bill on the last day of each month', () => {
+    const charges = ['2026-05-31', '2026-06-30', '2026-07-31', '2026-08-31', '2026-09-30'].map((d) => tx(d, -20, 'Gym Club'));
+    const [s] = recurringSeries(ledger(charges), today);
+    expect(s).toMatchObject({ cadence: 'monthly', nextDate: '2026-10-31', upcomingDate: '2026-10-31', state: 'active' });
+  });
+
+  it('steps a month-end anchor through February and leap years', () => {
+    expect(stepDate('2027-01-31', 'monthly', 1)).toBe('2027-02-28');
+    expect(stepDate('2028-01-31', 'monthly', 1)).toBe('2028-02-29');
+    expect(stepDate('2027-02-28', 'monthly', 1, 31)).toBe('2027-03-31');
+    expect(stepDate('2028-02-29', 'yearly', 1)).toBe('2029-02-28');
+    expect(stepDate('2026-01-15', 'monthly', -2)).toBe('2025-11-15');
+  });
+
+  it('detects weekly charges and gives a monthly equivalent', () => {
+    const charges = Array.from({ length: 6 }, (_, i) => tx(stepDate('2026-09-04', 'weekly', i), -12, 'Veg Box'));
+    const [s] = recurringSeries(ledger(charges), today);
+    expect(s).toMatchObject({ cadence: 'weekly', nextDate: '2026-10-16', state: 'missed', monthly: -52 });
+    expect(s.upcomingDate).toBe('2026-10-23');
+  });
+
+  it('detects a yearly renewal and spreads it over twelve months', () => {
+    const charges = ['2023-11-02', '2024-11-01', '2025-11-03'].map((d) => tx(d, -120, 'Cloud Storage Annual'));
+    const [s] = recurringSeries(ledger(charges), today);
+    expect(s).toMatchObject({ cadence: 'yearly', nextDate: '2026-11-03', monthly: -10, state: 'active' });
+  });
+
+  it('follows a series across a year boundary', () => {
+    const charges = monthly('Stream Plus', -15.99, '2025-10', 13, 28);
+    const [s] = recurringSeries(ledger(charges), today);
+    expect(s.charges).toHaveLength(13);
+    expect(s).toMatchObject({ cadence: 'monthly', nextDate: '2026-11-28', typical: -15.99 });
+  });
+
+  it('ignores refunds from a subscription merchant', () => {
+    const charges = [...monthly('Music Co', -9.99, '2026-05', 5), tx('2026-07-06', 9.99, 'Music Co')];
+    const [s] = detectRecurring(charges);
+    expect(s.charges.every((t) => t.amount < 0)).toBe(true);
+    expect(s.charges).toHaveLength(5);
+  });
+
+  it('matches charges to one merchant despite store numbers and casing', () => {
+    const charges = ['2026-06-05', '2026-07-05', '2026-08-05', '2026-09-05']
+      .map((d, i) => tx(d, -30, i % 2 ? 'SPOTIFY #1234' : 'Spotify 99821'));
+    expect(detectRecurring(charges)).toEqual([expect.objectContaining({ merchantKey: 'spotify', cadence: 'monthly' })]);
+  });
+});
