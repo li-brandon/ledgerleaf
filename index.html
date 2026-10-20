@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M6 26C6 12 16 5 27 5c0 11-7 21-21 21z' fill='%232f5d46'/></svg>" />
     <title>Ledgerleaf</title>
+    <script>
+      // Apply the saved theme before first paint (the app keeps it in sync; see src/theme.ts).
+      try {
+        var t = localStorage.getItem('ledgerleaf:theme');
+        document.documentElement.dataset.theme =
+          t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

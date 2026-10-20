@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import { NavIcon } from './components/icons';
+import { setCurrency } from './format';
 import {
   ROUTES, canonicalHash, navRoute, parseRoute, routeHref, routeLabel, type Route, type RouteId, type RouteParams,
 } from './lib/routes';
+import { settingsOf } from './lib/settings';
 import { reviewCount } from './lib/txEdits';
+import { useTheme } from './theme';
 import { useLedger, type Ledger } from './store';
 import Dashboard from './pages/Dashboard';
 import Accounts from './pages/Accounts';
@@ -55,6 +58,10 @@ export default function App() {
   const mainRef = useRef<HTMLElement>(null);
   const first = useRef(true);
   const toReview = useMemo(() => reviewCount(ledger.state.transactions), [ledger.state.transactions]);
+  const settings = settingsOf(ledger.state);
+  // Before anything renders an amount: every page formats through the shared formatter.
+  setCurrency(settings.currency);
+  useTheme(ledger.loading ? undefined : settings.theme);
 
   useEffect(() => {
     const on = () => setRoute(currentRoute());
