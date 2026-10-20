@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createPersister, demoCounts, loadLedger, openRepository, withoutDemo, type Persister, type Repository,
 } from './db';
+import { renameAccount, setAccountHidden } from './lib/accounts';
 import { currentMonth, upsertBudget } from './lib/budget';
 import { ensureCategory } from './lib/categories';
 import { emptyLedger } from './lib/migrate';
@@ -126,9 +127,24 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
       return { ...s, categories, budgets: upsertBudget(s.budgets, cat.id, currentMonth(), Math.max(0, amount || 0)) };
     }), []);
 
+  const renameAcct = useCallback((id: string, name: string) =>
+    setState((s) => {
+      const accounts = renameAccount(s.accounts, id, name);
+      return accounts === s.accounts ? s : { ...s, accounts };
+    }), []);
+
+  const setHidden = useCallback((id: string, hidden: boolean) =>
+    setState((s) => {
+      const accounts = setAccountHidden(s.accounts, id, hidden);
+      return accounts === s.accounts ? s : { ...s, accounts };
+    }), []);
+
   const reset = useCallback(() => setState(emptyLedger()), []);
 
-  return { state, loading, error, runSync, clearDemo, setCategory, setBudget, reset };
+  return {
+    state, loading, error, runSync, clearDemo, setCategory, setBudget, renameAccount: renameAcct,
+    setAccountHidden: setHidden, reset,
+  };
 }
 
 export type Ledger = ReturnType<typeof useLedger>;
