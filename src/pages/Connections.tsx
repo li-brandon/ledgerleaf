@@ -1,44 +1,69 @@
 import { useState } from 'react';
-import { CsvImportProvider, MockProvider, type SyncProvider } from '../lib/sync';
+import { providers, type ProviderEntry, type ProviderKind, type SyncProvider } from '../lib/sync';
 import type { Ledger } from '../store';
 
-const SAMPLE = 'date,description,amount,category,account\n2026-10-03,Corner Bakery,-6.25,Dining,Everyday Card';
+const KIND_LABEL: Record<ProviderKind, string> = { demo: 'Sample data', file: 'File import', remote: 'Online' };
+
+type Status = { ok: boolean; text: string };
 
 export default function Connections({ ledger }: { ledger: Ledger }) {
-  const [msg, setMsg] = useState('');
-  const { lastSync, accounts, transactions } = ledger.state;
+  const [status, setStatus] = useState<Status | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const { lastSync, syncs, accounts, transactions } = ledger.state;
 
   async function run(p: SyncProvider, extra = () => '') {
+    setBusy(p.id);
     try {
       const r = await ledger.runSync(p);
-      setMsg(`${p.name}: ${r.added} new of ${r.received} received${extra()}.`);
+      const updated = r.updated ? `, ${r.updated} updated` : '';
+      setStatus({ ok: true, text: `${p.name}: ${r.added} new of ${r.received} received${updated}${extra()}.` });
+      setErrors(({ [p.id]: _, ...rest }) => rest);
     } catch (e) {
-      setMsg(`${p.name} failed: ${(e as Error).message}`);
+      const text = e instanceof Error ? e.message : String(e);
+      setStatus({ ok: false, text });
+      setErrors((errs) => ({ ...errs, [p.id]: text }));
+    } finally {
+      setBusy(null);
     }
   }
 
-  async function onFile(file?: File) {
-    if (!file) return;
-    const p = new CsvImportProvider(await file.text());
+  async function onFile(entry: ProviderEntry, file?: File) {
+    if (!file || entry.kind !== 'file') return;
+    const p = entry.create(await file.text());
     await run(p, () => (p.skipped ? `, ${p.skipped} unreadable rows skipped` : ''));
   }
 
   return (
     <>
       <h1>Connections</h1>
-      {msg && <p className="notice" role="status">{msg}</p>}
+      {status && <p className={status.ok ? 'notice' : 'notice error'} role={status.ok ? 'status' : 'alert'}>{status.text}</p>}
       <div className="grid two">
-        <section className="card">
-          <h3>Demo Bank</h3>
-          <p className="muted">Three sample accounts with about four months of activity. Safe to re-sync; nothing is duplicated.</p>
-          <button onClick={() => run(new MockProvider())}>Sync demo bank</button>
-        </section>
-        <section className="card">
-          <h3>CSV import</h3>
-          <p className="muted">Columns: <code>date,description,amount,category,account</code>. Negative amounts are spending. Re-importing a file skips rows already present.</p>
-          <label className="btn">Choose CSV file<input type="file" accept=".csv,text/csv" hidden onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ''; }} /></label>
-          <pre className="sample">{SAMPLE}</pre>
-        </section>
+        {providers.list().map((entry) => {
+          const synced = syncs?.[entry.id]?.lastSync;
+          return (
+            <section className="card" key={entry.id}>
+              <h3>{entry.name}<span>{KIND_LABEL[entry.kind]}</span></h3>
+              {entry.description && <p className="muted">{entry.description}</p>}
+              <p className="muted">{synced ? `Last synced ${new Date(synced).toLocaleString()}` : 'Never synced'}</p>
+              {errors[entry.id] && <p className="notice error" role="alert">{errors[entry.id]}</p>}
+              {entry.kind === 'file' ? (
+                <>
+                  <label className="btn" aria-disabled={busy !== null}>
+                    Choose file
+                    <input type="file" accept={entry.accept} hidden disabled={busy !== null}
+                      onChange={(e) => { onFile(entry, e.target.files?.[0]); e.target.value = ''; }} />
+                  </label>
+                  {entry.sample && <pre className="sample">{entry.sample}</pre>}
+                </>
+              ) : (
+                <button disabled={busy !== null || entry.requiresAuth} onClick={() => run(entry.create())}>
+                  {entry.requiresAuth ? 'Sign-in not available' : busy === entry.id ? 'Syncing…' : 'Sync now'}
+                </button>
+              )}
+            </section>
+          );
+        })}
       </div>
       <section className="card">
         <h3>Local data</h3>
