@@ -225,3 +225,36 @@ describe('budget months with a custom start day', () => {
     expect(spendByMonth(txns, undefined, 15).get('2026-11')?.get('dining')).toBe(5);
   });
 });
+
+describe('rollover edge cases', () => {
+  it('keeps carrying through months with no record of their own', () => {
+    const f = rolloverMonth([rec('2026-07', 100, true)], spentBy({ '2026-07': 50, '2026-08': 120, '2026-09': 0 }), '2026-10');
+    // Jul +50, Aug 150-120 = +30, Sep 130 unspent: October starts with 130 carried.
+    expect(f).toMatchObject({ budgeted: 100, carry: 130, available: 230 });
+  });
+
+  it('carries across a year boundary', () => {
+    const f = rolloverMonth([rec('2025-12', 80, true)], spentBy({ '2025-12': 30 }), '2026-01');
+    expect(f).toMatchObject({ carry: 50, available: 130 });
+  });
+
+  it('ignores records after the month asked for', () => {
+    const f = rolloverMonth([rec('2026-09', 100, true), rec('2026-11', 999, true)], spentBy({}), '2026-10');
+    expect(f).toMatchObject({ budgeted: 100, carry: 100, available: 200 });
+  });
+
+  it('nets refunds within a month but never carries negative spending', () => {
+    const spend = spendByMonth([tx('2026-09-02', -40, 'Dining'), tx('2026-09-20', 70, 'Dining'), tx('2026-10-01', -10, 'Dining')]);
+    expect(spend.get('2026-09')?.get('dining')).toBe(0);
+    const f = rolloverMonth([rec('2026-09', 100, true)], (m) => spend.get(m)?.get('dining') ?? 0, '2026-10');
+    expect(f).toMatchObject({ carry: 100, available: 200, spent: 10, remaining: 190 });
+  });
+
+  it('follows a custom start day when carrying over', () => {
+    const txns = [tx('2026-09-14', -30, 'Dining'), tx('2026-09-15', -500, 'Dining')];
+    const rows = monthBudget({ budgets: [rec('2026-08', 100, true)], categories: defaultCategories(), transactions: txns },
+      '2026-09', new Date(2026, 8, 20), 15);
+    // With months starting on the 15th, the 14th belongs to August's budget month.
+    expect(rows.find((r) => r.categoryId === 'dining')).toMatchObject({ carry: 70, available: 170, spent: 500, status: 'over' });
+  });
+});

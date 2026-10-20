@@ -105,3 +105,13 @@ describe('parseTransactionsCsv', () => {
     expect(noHeader.transactions[0].id).toBe(reordered.transactions[0].id);
   });
 });
+
+describe('amount and date rejections', () => {
+  it.each(['', '   ', 'USD', '--5', '-5-', '1e3', '12.3.4', 'N/A', '$'])('rejects %j', (raw) => expect(parseAmount(raw)).toBeNull());
+  it.each(['2026-13-01', '02/29/2027', '00/10/2026', '10/32/2026', 'Foo 3, 2026', '2026-10'])('rejects date %j', (raw) =>
+    expect(normalizeDate(raw)).toBeNull());
+  it('accepts leap days', () => {
+    expect(normalizeDate('02/29/2028')).toBe('2028-02-29');
+    expect(normalizeDate('29 Feb 2028')).toBe('2028-02-29');
+  });
+});
