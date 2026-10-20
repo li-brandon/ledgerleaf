@@ -73,8 +73,13 @@ export function BarChart({ bars, label, highlightLast, W = 440 }: { bars: Bar[];
   );
 }
 
-/** Single-series line chart with point markers and native tooltips; points with an `href` are links. */
-export function LineChart({ points, label, W = 440 }: { points: { label: string; value: number; href?: string }[]; label: string; W?: number }) {
+/**
+ * Single-series line chart with point markers and native tooltips; points with an `href` are links.
+ * `labelEvery` thins the axis labels (always keeping the last) when space is tight.
+ */
+export function LineChart({ points, label, W = 440, labelEvery = 1 }: {
+  points: { label: string; value: number; href?: string }[]; label: string; W?: number; labelEvery?: number;
+}) {
   const max = Math.max(1, ...points.map((p) => p.value));
   const top = Math.ceil(max / niceStep(max / 4)) * niceStep(max / 4);
   const iw = W - PAD.left - PAD.right;
@@ -100,7 +105,7 @@ export function LineChart({ points, label, W = 440 }: { points: { label: string;
           {p.href
             ? <a href={p.href} aria-label={`${p.label}: ${fmtMoney(p.value)}`}><circle cx={x(i)} cy={y(p.value)} r={16} className="hit"><title>{`${p.label}: ${fmtMoney(p.value)}`}</title></circle></a>
             : <circle cx={x(i)} cy={y(p.value)} r={16} fill="transparent"><title>{`${p.label}: ${fmtMoney(p.value)}`}</title></circle>}
-          <text x={x(i)} y={H - 8} className="axis" textAnchor="middle">{p.label}</text>
+          {(points.length - 1 - i) % labelEvery === 0 && <text x={x(i)} y={H - 8} className="axis" textAnchor="middle">{p.label}</text>}
         </g>
       ))}
     </svg>
