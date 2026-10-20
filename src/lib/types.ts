@@ -11,6 +11,8 @@ export interface Account {
   currency?: string;
   /** Hidden accounts are kept but excluded from views. */
   hidden?: boolean;
+  /** Provider id that created this account, e.g. 'demo' or 'csv'. */
+  source?: string;
 }
 
 /** Point-in-time account balance, used for net worth history. */
@@ -19,6 +21,8 @@ export interface BalanceSnapshot {
   /** ISO date, YYYY-MM-DD */
   date: string;
   balance: number;
+  /** Provider id that reported this balance. */
+  source?: string;
 }
 
 export interface Transaction {
@@ -35,7 +39,7 @@ export interface Transaction {
   merchant?: string;
   notes?: string;
   reviewed?: boolean;
-  /** Provider id that produced this transaction, e.g. 'mock' or 'csv'. */
+  /** Provider id that produced this transaction, e.g. 'demo' or 'csv'. */
   source?: string;
   /** The provider's own id for this transaction. */
   externalId?: string;

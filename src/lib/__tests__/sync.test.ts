@@ -203,8 +203,8 @@ describe('applySync', () => {
     expect({ added, received }).toEqual({ added: 1, received: 1 });
     expect(state.syncs).toEqual({ bank: { lastSync: now.toISOString() } });
     expect(state.lastSync).toBe(now.toISOString());
-    expect(state.accounts[0].balance).toBe(50);
-    expect(state.balanceSnapshots).toEqual([{ accountId: 'a1', date: '2026-10-20', balance: 50 }]);
+    expect(state.accounts[0]).toMatchObject({ balance: 50, source: 'bank' });
+    expect(state.balanceSnapshots).toEqual([{ accountId: 'a1', date: '2026-10-20', balance: 50, source: 'bank' }]);
 
     const later = new Date(2026, 9, 21);
     const next = await syncOnce(state, fixedProvider({ accounts: [], transactions: [] }, { id: 'other' }), later);

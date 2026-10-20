@@ -54,8 +54,8 @@ export function syncSince(state: Pick<LedgerState, 'transactions'>, providerId: 
 }
 
 /**
- * Read everything from `provider` and check it. Every transaction is stamped with the
- * provider id as its source. Throws a {@link SyncError} if any call fails or the data is
+ * Read everything from `provider` and check it. Every account and transaction is stamped
+ * with the provider id as its source. Throws a {@link SyncError} if any call fails or the data is
  * malformed, so callers either get a complete result or nothing.
  */
 export async function fetchSync(
@@ -74,7 +74,12 @@ export async function fetchSync(
   }
   const problem = findInvalid(result, state.accounts.map((a) => a.id));
   if (problem) throw new SyncError(provider.id, `${provider.name} ${problem}; nothing was imported.`);
-  return { ...result, transactions: result.transactions.map((t) => ({ ...t, source: provider.id })) };
+  const source = provider.id;
+  return {
+    ...result,
+    accounts: result.accounts.map((a) => ({ ...a, source })),
+    transactions: result.transactions.map((t) => ({ ...t, source })),
+  };
 }
 
 export interface SyncOutcome {
@@ -84,14 +89,18 @@ export interface SyncOutcome {
   received: number;
 }
 
-/** Upsert one snapshot per account and day; unchanged snapshots keep their reference. */
-function withSnapshots(prev: BalanceSnapshot[], incoming: SyncResult, today: string): BalanceSnapshot[] {
+/**
+ * Upsert one snapshot per account and day, tagged with the provider id; unchanged
+ * snapshots keep their reference.
+ */
+function withSnapshots(prev: BalanceSnapshot[], incoming: SyncResult, today: string, source: string): BalanceSnapshot[] {
   if (!incoming.balances?.length) return prev;
   const out = [...prev];
+  const at = new Map(out.map((s, i) => [`${s.accountId}|${s.date}`, i]));
   for (const { accountId, balance, date = today } of incoming.balances) {
-    const i = out.findIndex((s) => s.accountId === accountId && s.date === date);
-    if (i < 0) out.push({ accountId, date, balance });
-    else if (out[i].balance !== balance) out[i] = { accountId, date, balance };
+    const i = at.get(`${accountId}|${date}`);
+    if (i === undefined) at.set(`${accountId}|${date}`, out.push({ accountId, date, balance, source }) - 1);
+    else if (out[i].balance !== balance || out[i].source !== source) out[i] = { accountId, date, balance, source };
   }
   return out;
 }
@@ -104,7 +113,7 @@ export function applySync(state: LedgerState, providerId: string, incoming: Sync
     ...state,
     accounts,
     transactions,
-    balanceSnapshots: withSnapshots(state.balanceSnapshots, incoming, localIsoDate(now)),
+    balanceSnapshots: withSnapshots(state.balanceSnapshots, incoming, localIsoDate(now), providerId),
     lastSync,
     syncs: { ...state.syncs, [providerId]: { lastSync } },
   });
