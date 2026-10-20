@@ -8,13 +8,16 @@ import {
   addCategory as addCat, deleteCategory as deleteCat, ensureCategory, updateCategory as updateCat, type CategoryDraft,
 } from './lib/categories';
 import { emptyLedger } from './lib/migrate';
+import {
+  addManualRecurring, removeManualRecurring, setRecurringDecision, type ManualDraft,
+} from './lib/recurring';
 import { applyRulesToLedger, moveRule as moveRuleIn, removeRule, upsertRule, type ApplyOptions } from './lib/rules';
 import { SyncError, applySync, fetchSync, type SyncProvider } from './lib/sync';
 import {
   addMerchantRule, editTransaction, removeMerchantRule, setCategory as setTxCategory, setReviewed as setTxReviewed,
   type TxEdit,
 } from './lib/txEdits';
-import type { LedgerState, Rule } from './lib/types';
+import type { LedgerState, RecurringDecision, Rule } from './lib/types';
 
 export type { LedgerState };
 
@@ -205,12 +208,19 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
   /** Apply every rule to existing transactions, leaving fields the user edited alone. */
   const applyRules = useCallback((opts: ApplyOptions = {}) => setState((s) => applyRulesToLedger(s, opts)), []);
 
+  /** Confirm or dismiss a detected recurring series; `undefined` makes it a suggestion again. */
+  const setRecurring = useCallback((key: string, decision: RecurringDecision | undefined) =>
+    setState((s) => setRecurringDecision(s, key, decision)), []);
+  /** Add a recurring charge by hand; resolves to an error message if the draft is invalid. */
+  const addRecurring = useCallback((draft: ManualDraft) => attempt((s) => addManualRecurring(s, draft)), [attempt]);
+  const removeRecurring = useCallback((id: string) => setState((s) => removeManualRecurring(s, id)), []);
+
   const reset = useCallback(() => setState(emptyLedger()), []);
 
   return {
     state, loading, error, runSync, clearDemo, setCategory, setAlways, setReviewed, editTransaction: editTx, setBudget, setRollover, renameAccount: renameAcct,
     setAccountHidden: setHidden, addCategory, updateCategory, deleteCategory, saveRule, deleteRule, moveRule, applyRules,
-    reset,
+    setRecurring, addRecurring, removeRecurring, reset,
   };
 }
 
