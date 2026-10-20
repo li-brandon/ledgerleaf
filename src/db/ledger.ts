@@ -17,7 +17,10 @@ const defaultStorage = (): LegacyStorage | undefined =>
 export async function readLedger(repo: Repository): Promise<LedgerState | undefined> {
   const { records, meta } = await repo.readAll();
   if (meta.version === undefined) return undefined;
-  return migrate({ ...inLedgerOrder(records, meta.order), version: meta.version, lastSync: meta.lastSync, syncs: meta.syncs });
+  return migrate({
+    ...inLedgerOrder(records, meta.order), version: meta.version, lastSync: meta.lastSync, syncs: meta.syncs,
+    importMappings: meta.importMappings,
+  });
 }
 
 function inLedgerOrder(records: LedgerRecords, order: Meta['order'] = {}): LedgerRecords {
@@ -35,7 +38,9 @@ function inLedgerOrder(records: LedgerRecords, order: Meta['order'] = {}): Ledge
 /** The writes that turn `prev` into `next`. Without `prev` everything is replaced. */
 export function diffLedger(next: LedgerState, prev?: LedgerState): LedgerChanges {
   const order = Object.fromEntries(MODEL_NAMES.map((n) => [n, next[n].map((v) => recordId(n, v as never))]));
-  const meta: Meta = { version: SCHEMA_VERSION, lastSync: next.lastSync, syncs: next.syncs, order };
+  const meta: Meta = {
+    version: SCHEMA_VERSION, lastSync: next.lastSync, syncs: next.syncs, importMappings: next.importMappings, order,
+  };
   if (!prev) return { clear: true, put: Object.fromEntries(MODEL_NAMES.map((n) => [n, next[n]])), meta };
 
   const changes: Required<Pick<LedgerChanges, 'put' | 'delete'>> = { put: {}, delete: {} };

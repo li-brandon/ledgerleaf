@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { readLedger, saveLedger } from '../ledger';
 import { createPersister } from '../persister';
 import { emptyLedger } from '../../lib/migrate';
-import { MockProvider, applySync, fetchSync, type SyncProvider } from '../../lib/sync';
+import { withImportMapping } from '../../lib/csvMapping';
+import { CsvImportProvider, MockProvider, applySync, fetchSync, type SyncProvider } from '../../lib/sync';
 import type { LedgerState } from '../../lib/types';
 import { ADAPTERS } from './helpers';
 
@@ -33,6 +34,20 @@ describe.each(ADAPTERS)('syncing into %s', (_, open) => {
     const again = await sync(stored!, new MockProvider(now), persister.commit);
     expect(again.added).toBe(0);
     expect((await readLedger(repo))?.transactions).toHaveLength(first.added);
+  });
+
+  it('persists the CSV mapping saved with an import', async () => {
+    const { repo, initial, persister } = await setup();
+    const text = 'When,What,Out\n10/01/2026,Tea,3.00';
+    const mapping = { date: 'When', description: 'What', debit: 'Out' };
+    const account = { id: 'csv-tea', name: 'Tea fund', type: 'checking' as const };
+    const p = new CsvImportProvider(text, { mapping, accountId: account.id, newAccount: account });
+    const outcome = applySync(initial, p.id, await fetchSync(p, initial), now);
+    await persister.commit(withImportMapping(outcome.state, account.id, mapping));
+
+    const stored = await readLedger(repo);
+    expect(stored?.importMappings).toEqual({ 'csv-tea': mapping });
+    expect(stored?.transactions).toEqual([expect.objectContaining({ amount: -3, accountId: 'csv-tea', source: 'csv' })]);
   });
 
   it('writes nothing when the provider fails part-way', async () => {

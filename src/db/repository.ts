@@ -33,6 +33,7 @@ export interface Meta {
   version?: number;
   lastSync?: string;
   syncs?: LedgerState['syncs'];
+  importMappings?: LedgerState['importMappings'];
   /**
    * Record keys (see {@link recordId}) of each store in ledger order. Stores return records
    * in key order, but order is meaningful (newest-first transactions, rule precedence).

@@ -1,5 +1,5 @@
 import { contentIds, normalizeDate, parseAmount, parseCsvRows, toCsv } from './csv';
-import type { CsvMapping, Transaction } from './types';
+import type { CsvMapping, LedgerState, Transaction } from './types';
 
 export type { CsvMapping };
 
@@ -195,4 +195,9 @@ export function errorRowsCsv(table: CsvTable, errors: RowError[]): string {
     [...table.headers, 'Error'],
     ...errors.map((e) => [...pad(e.cells), `Row ${e.row}: ${e.reason}`]),
   ]);
+}
+
+/** Remember `mapping` as the one to offer next time a CSV is imported into `accountId`. */
+export function withImportMapping(state: LedgerState, accountId: string, mapping: CsvMapping): LedgerState {
+  return { ...state, importMappings: { ...state.importMappings, [accountId]: { ...mapping } } };
 }

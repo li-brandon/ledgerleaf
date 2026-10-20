@@ -62,22 +62,25 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
   /**
    * Sync one provider, all or nothing: everything is fetched and validated, merged, and
    * written to storage before the ledger updates. Any failure throws a {@link SyncError}
-   * and leaves both the stored and in-memory ledger untouched.
+   * and leaves both the stored and in-memory ledger untouched. `also` makes further changes
+   * to the synced ledger that are saved in the same write, e.g. remembering a CSV mapping.
    */
-  const runSync = useCallback(async (provider: SyncProvider) => {
+  const runSync = useCallback(async (provider: SyncProvider, also: (s: LedgerState) => LedgerState = (s) => s) => {
     const incoming = await fetchSync(provider, latest.current);
     const now = new Date();
     const prev = latest.current;
+    const sync = (s: LedgerState) => also(applySync(s, provider.id, incoming, now).state);
     const outcome = applySync(prev, provider.id, incoming, now);
+    const next = also(outcome.state);
     try {
-      await persister.current?.commit(outcome.state);
+      await persister.current?.commit(next);
     } catch (e) {
       // The commit replaced any queued save; queue the current ledger again.
       persister.current?.schedule(latest.current);
       throw new SyncError(provider.id, `${provider.name} could not be saved; nothing was imported.`, { cause: e });
     }
     // Edits made while the sync was being written are kept by merging into them instead.
-    const merge = (s: LedgerState) => (s === prev ? outcome.state : applySync(s, provider.id, incoming, now).state);
+    const merge = (s: LedgerState) => (s === prev ? next : sync(s));
     latest.current = merge(latest.current);
     setState(merge);
     const { added, updated, received } = outcome;

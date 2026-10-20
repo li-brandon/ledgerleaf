@@ -88,6 +88,19 @@ describe('migrate', () => {
     expect(migrate(JSON.parse(JSON.stringify(once)), MONTH)).toEqual(once);
   });
 
+  it('keeps valid CSV import mappings and drops malformed ones', () => {
+    const s = migrate({
+      ...migrate(v1, MONTH),
+      importMappings: {
+        a: { date: 'Date', description: 'Memo', debit: 'Out', negate: true, junk: 1 },
+        b: { date: 'Date' },
+        c: 'nope',
+      },
+    } as never, MONTH);
+    expect(s.importMappings).toEqual({ a: { date: 'Date', description: 'Memo', debit: 'Out', negate: true } });
+    expect(migrate(v1, MONTH).importMappings).toBeUndefined();
+  });
+
   it('does not mutate its input', () => {
     const copy = JSON.parse(JSON.stringify(v1));
     migrate(v1, MONTH);

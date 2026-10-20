@@ -1,7 +1,8 @@
 import { budgetId, currentMonth } from './budget';
 import { defaultCategories, ensureCategory, findCategory } from './categories';
 import {
-  SCHEMA_VERSION, type Account, type Budget, type Budgets, type Category, type LedgerState, type Transaction,
+  SCHEMA_VERSION, type Account, type Budget, type Budgets, type Category, type CsvMapping, type LedgerState,
+  type Transaction,
 } from './types';
 
 export const V1_KEY = 'ledgerleaf:v1';
@@ -26,6 +27,17 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'obj
 
 /** v1 ids are prefixed with the provider id, e.g. `mock-…` or `csv-…`. */
 const sourceFromId = (id: string) => /^(mock|csv)-/.exec(id)?.[1];
+
+const MAPPING_COLUMNS = ['amount', 'debit', 'credit', 'category'] as const;
+
+/** A stored CSV mapping with unknown keys dropped, or undefined if it is unusable. */
+function normalizeMapping(v: unknown): CsvMapping | undefined {
+  if (!isObject(v) || typeof v.date !== 'string' || typeof v.description !== 'string') return undefined;
+  const out: CsvMapping = { date: v.date, description: v.description };
+  for (const k of MAPPING_COLUMNS) if (typeof v[k] === 'string') out[k] = v[k];
+  if (v.negate === true) out.negate = true;
+  return out;
+}
 
 function normalizeAccount(a: Account): Account {
   return { ...a, currency: a.currency ?? 'USD', hidden: a.hidden ?? false };
@@ -64,6 +76,13 @@ export function normalizeLedger(s: Partial<LedgerState>): LedgerState {
   if (s.lastSync) out.lastSync = s.lastSync;
   const syncs = isObject(s.syncs) ? Object.entries(s.syncs).filter(([, v]) => isObject(v) && typeof v.lastSync === 'string') : [];
   if (syncs.length) out.syncs = Object.fromEntries(syncs.map(([id, v]) => [id, { lastSync: v.lastSync }]));
+  const mappings = isObject(s.importMappings)
+    ? Object.entries(s.importMappings).flatMap(([id, v]) => {
+      const m = normalizeMapping(v);
+      return m ? [[id, m] as const] : [];
+    })
+    : [];
+  if (mappings.length) out.importMappings = Object.fromEntries(mappings);
   return out;
 }
 
