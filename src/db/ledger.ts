@@ -1,6 +1,9 @@
 import { V1_KEY, V2_KEY, emptyLedger, migrate } from '../lib/migrate';
 import { SCHEMA_VERSION, type LedgerState } from '../lib/types';
-import { MODEL_NAMES, keyOf, type LedgerChanges, type ModelName, type Models, type Repository } from './repository';
+import {
+  MODEL_NAMES, keyOf, recordId, type LedgerChanges, type LedgerRecords, type Meta, type ModelName, type Models,
+  type Repository,
+} from './repository';
 
 /** The localStorage keys used before IndexedDB; read once by {@link loadLedger}, then removed. */
 export const LEGACY_KEYS = [V2_KEY, V1_KEY] as const;
@@ -14,12 +17,25 @@ const defaultStorage = (): LegacyStorage | undefined =>
 export async function readLedger(repo: Repository): Promise<LedgerState | undefined> {
   const { records, meta } = await repo.readAll();
   if (meta.version === undefined) return undefined;
-  return migrate({ ...records, version: meta.version, lastSync: meta.lastSync });
+  return migrate({ ...inLedgerOrder(records, meta.order), version: meta.version, lastSync: meta.lastSync });
+}
+
+function inLedgerOrder(records: LedgerRecords, order: Meta['order'] = {}): LedgerRecords {
+  const out = { ...records };
+  for (const name of MODEL_NAMES) {
+    const ids = order[name];
+    if (!ids) continue;
+    const rank = new Map(ids.map((id, i) => [id, i]));
+    const at = (v: unknown) => rank.get(recordId(name, v as never)) ?? Infinity;
+    (out[name] as unknown[]) = [...records[name]].sort((a, b) => at(a) - at(b));
+  }
+  return out;
 }
 
 /** The writes that turn `prev` into `next`. Without `prev` everything is replaced. */
 export function diffLedger(next: LedgerState, prev?: LedgerState): LedgerChanges {
-  const meta = { version: SCHEMA_VERSION, lastSync: next.lastSync };
+  const order = Object.fromEntries(MODEL_NAMES.map((n) => [n, next[n].map((v) => recordId(n, v as never))]));
+  const meta: Meta = { version: SCHEMA_VERSION, lastSync: next.lastSync, order };
   if (!prev) return { clear: true, put: Object.fromEntries(MODEL_NAMES.map((n) => [n, next[n]])), meta };
 
   const changes: Required<Pick<LedgerChanges, 'put' | 'delete'>> = { put: {}, delete: {} };
@@ -27,10 +43,7 @@ export function diffLedger(next: LedgerState, prev?: LedgerState): LedgerChanges
   return { ...changes, meta };
 }
 
-/**
- * State updates are immutable, so a record whose reference is unchanged is unchanged.
- * Compound keys are compared as JSON.
- */
+/** State updates are immutable, so a record whose reference is unchanged is unchanged. */
 function diffStore<K extends ModelName>(
   name: K,
   next: Models[K]['value'][],
@@ -39,7 +52,7 @@ function diffStore<K extends ModelName>(
 ) {
   if (next === prev) return;
   const key = keyOf[name] as (v: Models[K]['value']) => Models[K]['key'];
-  const id = (v: Models[K]['value']) => JSON.stringify(key(v));
+  const id = (v: Models[K]['value']) => recordId(name, v);
   const before = new Map(prev.map((v) => [id(v), v]));
   const puts = next.filter((v) => before.get(id(v)) !== v);
   const kept = new Set(next.map(id));

@@ -32,7 +32,16 @@ export interface Meta {
   /** Schema version of the stored records; absent means the database has never been written. */
   version?: number;
   lastSync?: string;
+  /**
+   * Record keys (see {@link recordId}) of each store in ledger order. Stores return records
+   * in key order, but order is meaningful (newest-first transactions, rule precedence).
+   */
+  order?: Partial<Record<ModelName, string[]>>;
 }
+
+/** A store key as a string, so compound keys can be compared and listed. */
+export const recordId = <K extends ModelName>(name: K, v: Models[K]['value']) =>
+  JSON.stringify((keyOf[name] as (v: Models[K]['value']) => Models[K]['key'])(v));
 
 export type LedgerRecords = { [K in ModelName]: Models[K]['value'][] };
 
