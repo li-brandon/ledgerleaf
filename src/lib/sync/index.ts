@@ -6,7 +6,7 @@ export {
 } from './mockProvider';
 export { CSV_PROVIDER, CsvImportProvider, type CsvImportOptions } from './csvProvider';
 export { dedupeKey, mergeSync, type MergeOutcome } from './merge';
-export { SyncError, applySync, fetchSync, findInvalid, localIsoDate, syncSince, type SyncOutcome } from './run';
+export { SyncError, applySync, fetchSync, findInvalid, localIsoDate, syncBalances, syncSince, type SyncOutcome } from './run';
 export {
   ProviderRegistry, providers, type DirectProviderEntry, type FileProviderEntry, type ProviderEntry,
 } from './registry';

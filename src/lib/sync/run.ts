@@ -1,7 +1,8 @@
+import { accountBalance } from '../insights';
 import { normalizeLedger } from '../migrate';
-import type { BalanceSnapshot, LedgerState } from '../types';
+import type { Account, BalanceSnapshot, LedgerState, Transaction } from '../types';
 import { mergeSync } from './merge';
-import type { SyncProvider, SyncResult } from './types';
+import type { AccountBalance, SyncProvider, SyncResult } from './types';
 
 /** A sync that failed; the ledger is left exactly as it was. */
 export class SyncError extends Error {
@@ -90,14 +91,31 @@ export interface SyncOutcome {
 }
 
 /**
+ * The balances a sync records: everything the provider reported, plus today's derived
+ * balance for every account the sync touched whose balance comes from its transactions,
+ * so imports without balances (e.g. CSV) still leave net worth history behind.
+ */
+export function syncBalances(
+  incoming: SyncResult, accounts: Account[], transactions: Transaction[], today: string,
+): AccountBalance[] {
+  const reported = incoming.balances ?? [];
+  const covered = new Set(reported.filter((b) => (b.date ?? today) === today).map((b) => b.accountId));
+  const touched = new Set([...incoming.accounts.map((a) => a.id), ...incoming.transactions.map((t) => t.accountId)]);
+  const derived = accounts
+    .filter((a) => a.balance === undefined && touched.has(a.id) && !covered.has(a.id))
+    .map((a) => ({ accountId: a.id, balance: accountBalance(a, transactions), date: today }));
+  return [...reported, ...derived];
+}
+
+/**
  * Upsert one snapshot per account and day, tagged with the provider id; unchanged
  * snapshots keep their reference.
  */
-function withSnapshots(prev: BalanceSnapshot[], incoming: SyncResult, today: string, source: string): BalanceSnapshot[] {
-  if (!incoming.balances?.length) return prev;
+function withSnapshots(prev: BalanceSnapshot[], balances: AccountBalance[], today: string, source: string): BalanceSnapshot[] {
+  if (!balances.length) return prev;
   const out = [...prev];
   const at = new Map(out.map((s, i) => [`${s.accountId}|${s.date}`, i]));
-  for (const { accountId, balance, date = today } of incoming.balances) {
+  for (const { accountId, balance, date = today } of balances) {
     const i = at.get(`${accountId}|${date}`);
     if (i === undefined) at.set(`${accountId}|${date}`, out.push({ accountId, date, balance, source }) - 1);
     else if (out[i].balance !== balance || out[i].source !== source) out[i] = { accountId, date, balance, source };
@@ -109,11 +127,12 @@ function withSnapshots(prev: BalanceSnapshot[], incoming: SyncResult, today: str
 export function applySync(state: LedgerState, providerId: string, incoming: SyncResult, now = new Date()): SyncOutcome {
   const { accounts, transactions, added, updated } = mergeSync(state, incoming);
   const lastSync = now.toISOString();
+  const today = localIsoDate(now);
   const next = normalizeLedger({
     ...state,
     accounts,
     transactions,
-    balanceSnapshots: withSnapshots(state.balanceSnapshots, incoming, localIsoDate(now), providerId),
+    balanceSnapshots: withSnapshots(state.balanceSnapshots, syncBalances(incoming, accounts, transactions, today), today, providerId),
     lastSync,
     syncs: { ...state.syncs, [providerId]: { lastSync } },
   });

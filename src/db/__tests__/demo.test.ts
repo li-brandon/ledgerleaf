@@ -32,7 +32,8 @@ describe('withoutDemo', () => {
 
     expect(next.transactions.map((t) => t.description).sort()).toEqual(['Cake', 'Refund', 'Tea']);
     expect(next.transactions.every((t) => t.source === 'csv')).toBe(true);
-    expect(next.balanceSnapshots).toEqual([]);
+    // Only the imported account's own snapshot (its derived balance on import) is left.
+    expect(next.balanceSnapshots).toEqual([{ accountId: 'csv-tea', date: '2026-10-20', balance: -8, source: 'csv' }]);
     // The demo checking account holds an imported row, so it stays as a plain account.
     expect(next.accounts.map((a) => a.id).sort()).toEqual(['csv-tea', 'demo-checking']);
     const checking = next.accounts.find((a) => a.id === 'demo-checking')!;
@@ -79,11 +80,11 @@ describe.each(ADAPTERS)('clearDemoData with %s', (_, open) => {
     expect(stored).toEqual(cleared);
     expect(stored!.transactions.map((t) => t.description).sort()).toEqual(['Cake', 'Refund', 'Tea']);
     expect(stored!.accounts.map((a) => a.id).sort()).toEqual(['csv-tea', 'demo-checking']);
-    expect(stored!.balanceSnapshots).toEqual([]);
+    expect(stored!.balanceSnapshots).toEqual([{ accountId: 'csv-tea', date: '2026-10-20', balance: -8, source: 'csv' }]);
     expect(Object.keys(stored!.syncs ?? {})).toEqual(['csv']);
     const { records } = await repo.readAll();
     expect(records.transactions.some((t) => t.source === 'demo')).toBe(false);
-    expect(records.balanceSnapshots).toHaveLength(0);
+    expect(records.balanceSnapshots).toHaveLength(1);
   });
 
   it('writes the removal as one atomic batch and changes nothing if it fails', async () => {
