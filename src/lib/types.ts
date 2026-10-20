@@ -1,3 +1,5 @@
+import type { Settings } from './settings';
+
 export type AccountType = 'checking' | 'savings' | 'credit' | 'investment' | 'loan';
 
 export interface Account {
@@ -169,6 +171,8 @@ export interface LedgerState {
   importMappings?: Record<string, CsvMapping>;
   /** Confirmed / dismissed detected series and manually added ones. Absent until the user makes a choice. */
   recurring?: RecurringSettings;
+  /** Currency, budget month start and theme. Absent until changed; see `settingsOf` for defaults. */
+  settings?: Settings;
 }
 
 export const CATEGORIES = [

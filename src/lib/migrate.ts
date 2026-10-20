@@ -2,6 +2,7 @@ import { budgetId, currentMonth } from './budget';
 import { defaultCategories, ensureCategory, findCategory } from './categories';
 import { normalizeRecurring } from './recurring';
 import { normalizeRule } from './rules';
+import { normalizeSettings } from './settings';
 import {
   NON_SPEND, SCHEMA_VERSION, type Account, type Budget, type Budgets, type Category, type CsvMapping, type LedgerState,
   type Transaction,
@@ -123,6 +124,7 @@ export function normalizeLedger(s: Partial<LedgerState>): LedgerState {
   if (mappings.length) out.importMappings = Object.fromEntries(mappings);
   const recurring = normalizeRecurring(s.recurring);
   if (recurring) out.recurring = recurring;
+  if (isObject(s.settings)) out.settings = normalizeSettings(s.settings);
   return out;
 }
 

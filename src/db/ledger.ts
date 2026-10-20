@@ -19,7 +19,7 @@ export async function readLedger(repo: Repository): Promise<LedgerState | undefi
   if (meta.version === undefined) return undefined;
   return migrate({
     ...inLedgerOrder(records, meta.order), version: meta.version, lastSync: meta.lastSync, syncs: meta.syncs,
-    importMappings: meta.importMappings, recurring: meta.recurring,
+    importMappings: meta.importMappings, recurring: meta.recurring, settings: meta.settings,
   });
 }
 
@@ -40,7 +40,7 @@ export function diffLedger(next: LedgerState, prev?: LedgerState): LedgerChanges
   const order = Object.fromEntries(MODEL_NAMES.map((n) => [n, next[n].map((v) => recordId(n, v as never))]));
   const meta: Meta = {
     version: SCHEMA_VERSION, lastSync: next.lastSync, syncs: next.syncs, importMappings: next.importMappings,
-    recurring: next.recurring, order,
+    recurring: next.recurring, settings: next.settings, order,
   };
   if (!prev) return { clear: true, put: Object.fromEntries(MODEL_NAMES.map((n) => [n, next[n]])), meta };
 
