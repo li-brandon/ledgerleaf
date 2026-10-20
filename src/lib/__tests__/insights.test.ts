@@ -46,3 +46,23 @@ describe('balances', () => {
     expect(netBalance([{ id: 'a', name: 'A', type: 'checking', balance: 5 }, { id: 'b', name: 'B', type: 'credit' }], txns)).toBe(-5);
   });
 });
+
+describe('exclude from spending', () => {
+  const excluded = new Set(['income', 'transfer', 'dining']);
+
+  it('leaves excluded categories out of monthly spend and top merchants', () => {
+    const rows = monthlySpend(txns, monthRange('2026-10', 1), excluded);
+    expect(rows[0]).toEqual({ month: '2026-10', total: 200, byCategory: { Groceries: 200 } });
+    expect(topMerchants(txns, 5, undefined, excluded).map((m) => m.name)).toEqual(['Harvest Co-op']);
+  });
+
+  it('counts Transfer once it is no longer excluded', () => {
+    expect(monthlySpend(txns, ['2026-10'], new Set(['income']))[0].byCategory).toMatchObject({ Transfer: 300 });
+  });
+
+  it('groups top merchants by their (renamed) merchant', () => {
+    const renamed = [tx('2026-10-02', -20, 'Dining', 'SQ *NORI 1'), tx('2026-10-03', -5, 'Dining', 'SQ *NORI 2')]
+      .map((t) => ({ ...t, merchant: 'Nori House' }));
+    expect(topMerchants(renamed)).toEqual([{ name: 'Nori House', total: 25, count: 2 }]);
+  });
+});

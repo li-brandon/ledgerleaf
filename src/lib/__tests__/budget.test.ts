@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { budgetProgress, budgetTotals, budgetsForMonth, currentMonth, spendByCategory, upsertBudget } from '../budget';
+import {
+  budgetProgress, budgetTotals, budgetsForMonth, currentMonth, isSpend, spendByCategory, spendExclusions, upsertBudget,
+} from '../budget';
+import { defaultCategories } from '../categories';
 import type { Transaction } from '../types';
 
 let n = 0;
@@ -66,5 +69,36 @@ describe('budgetsForMonth / upsertBudget', () => {
     const start = [{ ...b('dining', '2026-08', 100), rollover: true }];
     const next = upsertBudget(upsertBudget(start, 'dining', '2026-10', 120), 'dining', '2026-10', 130);
     expect(next).toEqual([start[0], { ...b('dining', '2026-10', 130), rollover: true }]);
+  });
+});
+
+describe('exclude from spending', () => {
+  const categories = defaultCategories().map((c) => (c.id === 'shopping' ? { ...c, excludeFromSpend: true } : c));
+  const excluded = spendExclusions(categories);
+
+  it('collects the ids of excluded categories', () => {
+    expect([...excluded].sort()).toEqual(['income', 'shopping', 'transfer']);
+  });
+
+  it('leaves excluded categories out of spend and budget progress', () => {
+    expect(spendByCategory(txns, '2026-10', excluded)).toEqual({ Groceries: 100, Dining: 95 });
+    const lines = budgetProgress({ Groceries: 400 }, txns, '2026-10', excluded);
+    expect(lines.map((l) => l.category)).toEqual(['Groceries', 'Dining']);
+    expect(budgetTotals(lines).spent).toBe(195);
+  });
+
+  it('counts a category again once the flag is cleared, by id even after a rename', () => {
+    const renamed = { ...tx('2026-10-05', -12, 'Income'), category: 'Side gig', categoryId: 'side-gig' };
+    expect(isSpend(renamed, spendExclusions(categories))).toBe(true);
+    expect(isSpend({ ...renamed, categoryId: 'income' }, excluded)).toBe(false);
+    expect(spendByCategory(txns, '2026-10', new Set())).toMatchObject({ Transfer: 500, Shopping: 30 });
+  });
+
+  it('drops budgets of excluded categories', () => {
+    const budgets = [
+      { id: 'shopping:2026-10', categoryId: 'shopping', month: '2026-10', amount: 250, rollover: false },
+      { id: 'dining:2026-10', categoryId: 'dining', month: '2026-10', amount: 300, rollover: false },
+    ];
+    expect(budgetsForMonth(budgets, categories, '2026-10')).toEqual({ Dining: 300 });
   });
 });
