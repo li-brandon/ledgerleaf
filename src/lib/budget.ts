@@ -6,6 +6,27 @@ export const monthKey = (date: string) => date.slice(0, 7);
 export const currentMonth = (now = new Date()) =>
   `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
+const isoDay = (d: Date) => `${currentMonth(d)}-${String(d.getDate()).padStart(2, '0')}`;
+
+/**
+ * The budget month an ISO date falls in when budget months start on `startDay` (1–28): a
+ * month is named after the calendar month it starts in, so with a start day of 15,
+ * 2026-11-03 belongs to "2026-10" (Oct 15 – Nov 14).
+ */
+export function budgetMonthOf(date: string, startDay = 1): string {
+  const month = monthKey(date);
+  return startDay > 1 && Number(date.slice(8, 10)) < startDay ? addMonths(month, -1) : month;
+}
+
+/** The budget month `now` falls in. */
+export const currentBudgetMonth = (startDay = 1, now = new Date()) => budgetMonthOf(isoDay(now), startDay);
+
+/** First and last ISO dates (inclusive) of a budget month. */
+export function budgetPeriod(month: string, startDay = 1): { from: string; to: string } {
+  const [y, m] = month.split('-').map(Number);
+  return { from: isoDay(new Date(y, m - 1, startDay)), to: isoDay(new Date(y, m, startDay - 1)) };
+}
+
 /** Ids of categories that never count as spending. */
 export type SpendExclusions = ReadonlySet<string>;
 
@@ -187,12 +208,12 @@ const txCategoryId = (t: Transaction) => t.categoryId ?? slug(t.category);
 
 /** Net spend per month and category id (refunds reduce it, never below zero). */
 export function spendByMonth(
-  txns: readonly Transaction[], excluded: SpendExclusions = DEFAULT_EXCLUSIONS,
+  txns: readonly Transaction[], excluded: SpendExclusions = DEFAULT_EXCLUSIONS, startDay = 1,
 ): Map<string, Map<string, number>> {
   const out = new Map<string, Map<string, number>>();
   for (const t of txns) {
     if (isExcluded(t, excluded)) continue;
-    const m = monthKey(t.date);
+    const m = budgetMonthOf(t.date, startDay);
     const row = out.get(m) ?? out.set(m, new Map()).get(m)!;
     const id = txCategoryId(t);
     row.set(id, (row.get(id) ?? 0) - t.amount);
@@ -201,13 +222,14 @@ export function spendByMonth(
   return out;
 }
 
-/** Share of `month` that has passed by `today`: 0 before it starts, 1 once it is over. */
-export function monthElapsed(month: string, today = new Date()): number {
-  const now = currentMonth(today);
+/** Share of budget month `month` that has passed by the end of `today`: 0 before it starts, 1 once it is over. */
+export function monthElapsed(month: string, today = new Date(), startDay = 1): number {
+  const now = currentBudgetMonth(startDay, today);
   if (month < now) return 1;
   if (month > now) return 0;
-  const [y, m] = month.split('-').map(Number);
-  return today.getDate() / new Date(y, m, 0).getDate();
+  const { from, to } = budgetPeriod(month, startDay);
+  const day = (iso: string) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 86_400_000;
+  return (day(isoDay(today)) - day(from) + 1) / (day(to) - day(from) + 1);
 }
 
 export interface BudgetRow extends MonthFigures {
@@ -222,14 +244,14 @@ export interface BudgetRow extends MonthFigures {
 
 /**
  * Every budgeted (or spent-in) category for `month`, with rollover and pace. Categories
- * excluded from spending are left out.
+ * excluded from spending are left out. Months start on `startDay` (see {@link budgetMonthOf}).
  */
 export function monthBudget(
   state: { budgets: readonly Budget[]; categories: readonly Category[]; transactions: readonly Transaction[] },
-  month: string, today = new Date(),
+  month: string, today = new Date(), startDay = 1,
 ): BudgetRow[] {
   const excluded = spendExclusions([...state.categories]);
-  const spend = spendByMonth(state.transactions, excluded);
+  const spend = spendByMonth(state.transactions, excluded, startDay);
   const names = new Map(state.categories.map((c) => [c.id, c.name]));
   for (const t of state.transactions) if (!names.has(txCategoryId(t))) names.set(txCategoryId(t), t.category);
   const records = new Map<string, Budget[]>();
@@ -237,7 +259,7 @@ export function monthBudget(
     if (!excluded.has(b.categoryId)) records.set(b.categoryId, [...(records.get(b.categoryId) ?? []), b]);
   }
   const ids = new Set([...records.keys(), ...(spend.get(month)?.keys() ?? [])]);
-  const elapsed = monthElapsed(month, today);
+  const elapsed = monthElapsed(month, today, startDay);
   const rows: BudgetRow[] = [];
   for (const categoryId of ids) {
     const f = rolloverMonth(records.get(categoryId) ?? [], (m) => spend.get(m)?.get(categoryId) ?? 0, month);
