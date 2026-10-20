@@ -1,10 +1,12 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type { PageProps } from '../App';
+import TxDetail from '../components/TxDetail';
 import { fmtDay, fmtMoney } from '../format';
 import type { RouteParams } from '../lib/routes';
 import {
   PAGE_SIZE, activeFilterCount, applyFilters, filtersHref, groupByDate, hasFilters, parseFilters, totals,
 } from '../lib/txFilters';
+import { moveSelection, txKeyAction } from '../lib/txKeys';
 import EmptyState from './EmptyState';
 
 /** How long the URL waits for typing to settle before it is updated. */
@@ -63,6 +65,93 @@ export default function Transactions({ ledger, params }: PageProps) {
   );
   const accountName = Object.fromEntries(accounts.map((a) => [a.id, a.name]));
   const more = activeFilterCount({ ...filters, q: '' });
+  const color = Object.fromEntries(known.map((c) => [c.id, c.color]));
+
+  // The open transaction (shown in the detail panel) and the rows ticked for bulk actions.
+  const [activeId, setActiveId] = useState<string>();
+  const [checked, setChecked] = useState<ReadonlySet<string>>(() => new Set());
+  const active = activeId === undefined ? undefined : transactions.find((t) => t.id === activeId);
+  const shownRows = useMemo(() => rows.slice(0, limit), [rows, limit]);
+  const shownIds = useMemo(() => shownRows.map((t) => t.id), [shownRows]);
+  const picked = shownIds.filter((id) => checked.has(id));
+  const allPicked = picked.length > 0 && picked.length === shownIds.length;
+
+  const rowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const categoryRef = useRef<HTMLSelectElement>(null);
+  const bulkCategoryRef = useRef<HTMLSelectElement>(null);
+  const bulkAllRef = useRef<HTMLInputElement>(null);
+  const [focusCategory, setFocusCategory] = useState(false);
+
+  useEffect(() => {
+    if (bulkAllRef.current) bulkAllRef.current.indeterminate = picked.length > 0 && !allPicked;
+  });
+
+  const openRow = (id: string | undefined, focus = false) => {
+    setActiveId(id);
+    if (!id || !focus) return;
+    const el = rowRefs.current.get(id);
+    el?.focus({ preventScroll: true });
+    el?.scrollIntoView({ block: 'nearest' });
+  };
+  const close = () => {
+    const el = activeId === undefined ? undefined : rowRefs.current.get(activeId);
+    setActiveId(undefined);
+    el?.focus({ preventScroll: true });
+  };
+  const toggle = (id: string, on: boolean) =>
+    setChecked((c) => {
+      const next = new Set(c);
+      if (on) next.add(id); else next.delete(id);
+      return next;
+    });
+  const pickAll = (on: boolean) => setChecked(on ? new Set(shownIds) : new Set());
+  const bulkCategory = (name: string) => name && ledger.setCategory(picked, name);
+  const showPicker = (el: HTMLSelectElement | null) => {
+    el?.focus();
+    try { el?.showPicker?.(); } catch { /* not supported or not allowed: focus is enough */ }
+  };
+
+  // `c` with nothing open opens the first row, then focuses its category once rendered.
+  useEffect(() => {
+    if (!focusCategory || !active) return;
+    setFocusCategory(false);
+    categoryRef.current?.focus();
+  }, [focusCategory, active]);
+
+  const onKey = useRef<(e: KeyboardEvent) => void>(undefined);
+  onKey.current = (e) => {
+    const action = txKeyAction(e);
+    if (!action || !shownIds.length) return;
+    if (action === 'next' || action === 'prev') {
+      openRow(moveSelection(shownIds, activeId, action === 'next' ? 1 : -1), true);
+    } else if (action === 'review') {
+      if (picked.length) ledger.setReviewed(picked, true);
+      else if (active) {
+        ledger.setReviewed(active.id, !active.reviewed);
+        // Marking reviewed moves on to the next row, for quick triage.
+        if (!active.reviewed) {
+          const next = moveSelection(shownIds, active.id, 1);
+          openRow(next === active.id ? moveSelection(shownIds, active.id, -1) : next, true);
+        }
+      } else return;
+    } else if (action === 'category') {
+      if (active) showPicker(categoryRef.current);
+      else if (picked.length) showPicker(bulkCategoryRef.current);
+      else {
+        openRow(shownIds[0], true);
+        setFocusCategory(true);
+      }
+    } else if (action === 'close') {
+      if (!active) return;
+      close();
+    }
+    e.preventDefault();
+  };
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => onKey.current?.(e);
+    document.addEventListener('keydown', on);
+    return () => document.removeEventListener('keydown', on);
+  }, []);
 
   return (
     <>
@@ -149,44 +238,79 @@ export default function Transactions({ ledger, params }: PageProps) {
             </div>
           ) : (
             <>
-              <div className="tx-list">
-                {groups.map((g) => (
-                  <section key={g.date} className="tx-day" aria-label={fmtDay(g.date)}>
-                    <h4 className="tx-day-head">
-                      <span>{fmtDay(g.date)}</span>
-                      <span className={g.total > 0 ? 'pos' : ''}>{fmtMoney(g.total)}</span>
-                    </h4>
-                    <ul>
-                      {g.rows.map((t) => (
-                        <li key={t.id} className={`tx-row${t.reviewed ? ' is-reviewed' : ''}`}>
-                          <div className="tx-main">
-                            <span className="tx-desc">{t.description}</span>
-                            <span className="tx-meta">
-                              {[t.merchant && t.merchant !== t.description ? t.merchant : '', accountName[t.accountId] ?? '—']
-                                .filter(Boolean).join(' · ')}
-                              {t.notes && <em> — {t.notes}</em>}
-                            </span>
-                          </div>
-                          <select
-                            className="inline tx-cat" value={t.category} onChange={(e) => ledger.setCategory(t.id, e.target.value)}
-                            aria-label={`Category for ${t.description}`}
-                          >
-                            {categories.map((c) => <option key={c}>{c}</option>)}
-                          </select>
-                          <label className="tx-check" title={t.reviewed ? 'Reviewed' : 'Mark reviewed'}>
-                            <input
-                              type="checkbox" checked={!!t.reviewed} onChange={(e) => ledger.setReviewed(t.id, e.target.checked)}
-                              aria-label={`Reviewed: ${t.description}`}
-                            />
-                            <span aria-hidden>Reviewed</span>
-                          </label>
-                          <span className={`tx-amt num ${t.amount > 0 ? 'pos' : ''}`}>{fmtMoney(t.amount)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                ))}
+              <div className="tx-bulk" role="group" aria-label="Bulk actions">
+                <label className="tx-bulk-all">
+                  <input ref={bulkAllRef} type="checkbox" checked={allPicked} onChange={(e) => pickAll(e.target.checked)} />
+                  <span>{picked.length ? `${picked.length.toLocaleString('en-US')} selected` : `Select all ${visible.toLocaleString('en-US')} shown`}</span>
+                </label>
+                {picked.length > 0 && (
+                  <>
+                    <select
+                      ref={bulkCategoryRef} value="" aria-label="Set category for selected transactions"
+                      onChange={(e) => bulkCategory(e.target.value)}
+                    >
+                      <option value="">Set category…</option>
+                      {categories.map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                    <button type="button" onClick={() => ledger.setReviewed(picked, true)}>Mark reviewed</button>
+                    <button type="button" className="link" onClick={() => pickAll(false)}>Clear selection</button>
+                  </>
+                )}
               </div>
+              <div className={`tx-layout${active ? ' has-detail' : ''}`}>
+                <div className="tx-list">
+                  {groups.map((g) => (
+                    <section key={g.date} className="tx-day" aria-label={fmtDay(g.date)}>
+                      <h4 className="tx-day-head">
+                        <span>{fmtDay(g.date)}</span>
+                        <span className={g.total > 0 ? 'pos' : ''}>{fmtMoney(g.total)}</span>
+                      </h4>
+                      <ul>
+                        {g.rows.map((t) => (
+                          <li
+                            key={t.id}
+                            className={`tx-row${t.reviewed ? ' is-reviewed' : ''}${t.id === activeId ? ' is-active' : ''}${checked.has(t.id) ? ' is-picked' : ''}`}
+                          >
+                            <input
+                              type="checkbox" className="tx-pick" checked={checked.has(t.id)}
+                              onChange={(e) => toggle(t.id, e.target.checked)} aria-label={`Select ${t.description}`}
+                            />
+                            <button
+                              type="button" className="tx-open" aria-current={t.id === activeId ? 'true' : undefined}
+                              ref={(el) => { if (el) rowRefs.current.set(t.id, el); else rowRefs.current.delete(t.id); }}
+                              onClick={() => (t.id === activeId ? close() : openRow(t.id))}
+                            >
+                              <span className="tx-main">
+                                <span className="tx-desc">
+                                  {!t.reviewed && <span className="tx-dot" title="Needs review"><span className="sr-only">Needs review: </span></span>}
+                                  {t.description}
+                                </span>
+                                <span className="tx-meta">
+                                  {[t.merchant && t.merchant !== t.description ? t.merchant : '', accountName[t.accountId] ?? '—']
+                                    .filter(Boolean).join(' · ')}
+                                  {t.notes && <em> — {t.notes}</em>}
+                                </span>
+                              </span>
+                              <span className="tx-cat">
+                                <i style={{ background: (t.categoryId && color[t.categoryId]) || 'var(--color-text-muted)' }} aria-hidden />
+                                {t.category}
+                              </span>
+                              <span className={`tx-amt num ${t.amount > 0 ? 'pos' : ''}`}>{fmtMoney(t.amount)}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ))}
+                </div>
+                {active && (
+                  <TxDetail
+                    key={active.id} tx={active} accountName={accountName[active.accountId] ?? '—'} categories={categories}
+                    rules={ledger.state.rules} ledger={ledger} categoryRef={categoryRef} onClose={close}
+                  />
+                )}
+              </div>
+              {active && <button type="button" className="tx-backdrop" aria-label="Close details" tabIndex={-1} onClick={close} />}
               <div className="tx-more">
                 <span className="muted">Showing {visible.toLocaleString('en-US')} of {rows.length.toLocaleString('en-US')}</span>
                 {visible < rows.length && (
