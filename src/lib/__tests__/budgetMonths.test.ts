@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addMonths, budgetAt, isMonthKey, monthBudget, monthElapsed, monthTotals, rolloverMonth, setMonthBudget,
+  addMonths, budgetAt, budgetMonthOf, budgetPeriod, currentBudgetMonth, isMonthKey, monthBudget, monthElapsed, monthTotals,
+  rolloverMonth, setMonthBudget, spendByMonth,
 } from '../budget';
 import { defaultCategories } from '../categories';
 import type { Budget, Transaction } from '../types';
@@ -180,5 +181,47 @@ describe('monthBudget', () => {
       budgeted: 1800, carry: 50, available: 1850, spent: 1595, remaining: 255,
       expected: Math.round((by.dining.expected + by.rent.expected) * 100) / 100,
     });
+  });
+});
+
+describe('budget months with a custom start day', () => {
+  it('assigns dates before the start day to the previous budget month', () => {
+    expect(budgetMonthOf('2026-11-03', 15)).toBe('2026-10');
+    expect(budgetMonthOf('2026-11-15', 15)).toBe('2026-11');
+    expect(budgetMonthOf('2026-01-14', 15)).toBe('2025-12');
+    expect(budgetMonthOf('2026-11-03')).toBe('2026-11');
+  });
+
+  it('finds the current budget month', () => {
+    expect(currentBudgetMonth(15, new Date(2026, 9, 20))).toBe('2026-10');
+    expect(currentBudgetMonth(25, new Date(2026, 9, 20))).toBe('2026-09');
+    expect(currentBudgetMonth(1, new Date(2026, 9, 20))).toBe('2026-10');
+  });
+
+  it('spans start day to the day before the next start', () => {
+    expect(budgetPeriod('2026-10')).toEqual({ from: '2026-10-01', to: '2026-10-31' });
+    expect(budgetPeriod('2026-10', 15)).toEqual({ from: '2026-10-15', to: '2026-11-14' });
+    expect(budgetPeriod('2026-12', 28)).toEqual({ from: '2026-12-28', to: '2027-01-27' });
+    expect(budgetPeriod('2026-01', 28)).toEqual({ from: '2026-01-28', to: '2026-02-27' });
+  });
+
+  it('measures elapsed share within the shifted period', () => {
+    // Oct 15 – Nov 14 is 31 days; Oct 20 is day 6.
+    expect(monthElapsed('2026-10', new Date(2026, 9, 20), 15)).toBeCloseTo(6 / 31);
+    expect(monthElapsed('2026-09', new Date(2026, 9, 20), 15)).toBe(1);
+    expect(monthElapsed('2026-11', new Date(2026, 9, 20), 15)).toBe(0);
+    // A start day of 1 matches calendar months.
+    expect(monthElapsed('2026-10', new Date(2026, 9, 20))).toBeCloseTo(20 / 31);
+    expect(monthElapsed('2026-10', new Date(2026, 9, 20), 1)).toBeCloseTo(20 / 31);
+  });
+
+  it('counts spending in the budget month its date falls in', () => {
+    const txns = [tx('2026-10-14', -40, 'Dining'), tx('2026-10-15', -25, 'Dining'), tx('2026-11-14', -10, 'Dining'), tx('2026-11-15', -5, 'Dining')];
+    const state = { budgets: [rec('2026-09', 100)], categories: defaultCategories(), transactions: txns };
+    const today = new Date(2026, 10, 1);
+    expect(monthBudget(state, '2026-10', today, 15).find((r) => r.categoryId === 'dining')?.spent).toBe(35);
+    expect(monthBudget(state, '2026-09', today, 15).find((r) => r.categoryId === 'dining')?.spent).toBe(40);
+    expect(monthBudget(state, '2026-10', today).find((r) => r.categoryId === 'dining')?.spent).toBe(65);
+    expect(spendByMonth(txns, undefined, 15).get('2026-11')?.get('dining')).toBe(5);
   });
 });
