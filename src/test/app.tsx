@@ -9,9 +9,9 @@ import { IDBFactory } from 'fake-indexeddb';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, vi } from 'vitest';
 import App from '../App';
-import { openIdbRepository, saveLedger } from '../db';
+import { openIdbRepository, readLedger, saveLedger } from '../db';
 import { emptyLedger } from '../lib/migrate';
-import { MockProvider, applySync, fetchSync } from '../lib/sync';
+import { CsvImportProvider, MockProvider, applySync, fetchSync, type SyncProvider } from '../lib/sync';
 import type { LedgerState } from '../lib/types';
 
 beforeEach(() => {
@@ -33,11 +33,25 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** A ledger holding the demo provider's data, as if "Sync now" had been pressed on `now`. */
-export async function demoLedger(now = new Date()): Promise<LedgerState> {
+async function synced(p: SyncProvider, now = new Date()): Promise<LedgerState> {
   const state = emptyLedger();
-  const p = new MockProvider(now);
   return applySync(state, p.id, await fetchSync(p, state), now).state;
+}
+
+/** A ledger holding the demo provider's data, as if "Sync now" had been pressed on `now`. */
+export const demoLedger = (now = new Date()) => synced(new MockProvider(now), now);
+
+/** A ledger holding `csv` (date,description,amount[,category] columns) imported into one checking account. */
+export const csvLedger = (csv: string) => synced(new CsvImportProvider(csv, {
+  mapping: { date: 'date', description: 'description', amount: 'amount', ...(csv.split('\n')[0].includes('category') && { category: 'category' }) },
+  accountId: 'everyday',
+  newAccount: { id: 'everyday', name: 'Everyday', type: 'checking' },
+}));
+
+/** The ledger as currently stored in the (fake) IndexedDB. */
+export async function stored(): Promise<LedgerState> {
+  const repo = await openIdbRepository();
+  try { return (await readLedger(repo))!; } finally { repo.close(); }
 }
 
 /** Write `state` to the (fake) IndexedDB the app opens. */

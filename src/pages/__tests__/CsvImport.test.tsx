@@ -2,8 +2,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { openIdbRepository, readLedger } from '../../db';
-import { renderApp } from '../../test/app';
+import { renderApp, stored } from '../../test/app';
 
 const BANK_CSV = [
   'Date,Description,Amount,Category',
@@ -17,11 +16,6 @@ const csvFile = (text: string, name = 'fernway_checking.csv') => new File([text]
 /** The CSV import card on Connections. */
 const card = () => screen.getByRole('heading', { name: /CSV import/ }).closest('section')!;
 const fileInput = () => card().querySelector<HTMLInputElement>('input[type=file]')!;
-
-async function stored() {
-  const repo = await openIdbRepository();
-  try { return (await readLedger(repo))!; } finally { repo.close(); }
-}
 
 describe('CSV import flow', () => {
   it('detects the columns, previews the rows and imports them into a new account', async () => {
