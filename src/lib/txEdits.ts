@@ -1,0 +1,133 @@
+/**
+ * User edits to transactions (category, merchant, notes, reviewed) and the
+ * "always categorize like this" rules they can create. Pure, so it can be unit tested.
+ */
+import { ensureCategory } from './categories';
+import { hashId } from './sync/hash';
+import type { LedgerState, Rule, Transaction } from './types';
+
+/** Fields the transaction detail can edit. */
+export interface TxEdit {
+  merchant?: string;
+  notes?: string;
+  reviewed?: boolean;
+}
+
+/** How many transactions still need review. */
+export const reviewCount = (transactions: readonly Transaction[]) =>
+  transactions.reduce((n, t) => (t.reviewed ? n : n + 1), 0);
+
+/** Apply `fn` to the transactions in `ids`; unchanged rows (and an unchanged ledger) keep their reference. */
+function mapTransactions(
+  state: LedgerState, ids: Iterable<string>, fn: (t: Transaction) => Transaction,
+): LedgerState {
+  const want = new Set(ids);
+  let changed = false;
+  const transactions = state.transactions.map((t) => {
+    if (!want.has(t.id)) return t;
+    const next = fn(t);
+    if (next !== t) changed = true;
+    return next;
+  });
+  return changed ? { ...state, transactions } : state;
+}
+
+/**
+ * Edit merchant, notes or reviewed on one transaction. A blank merchant falls back to the
+ * description; blank notes are removed. Returns `state` itself when nothing changes.
+ */
+export function editTransaction(state: LedgerState, id: string, edit: TxEdit): LedgerState {
+  return mapTransactions(state, [id], (t) => {
+    const next: Transaction = { ...t };
+    if (edit.merchant !== undefined) next.merchant = edit.merchant.trim() || t.description;
+    if (edit.notes !== undefined) {
+      if (edit.notes.trim()) next.notes = edit.notes;
+      else delete next.notes;
+    }
+    if (edit.reviewed !== undefined) next.reviewed = edit.reviewed;
+    const same = next.merchant === t.merchant && next.notes === t.notes && next.reviewed === t.reviewed;
+    return same ? t : next;
+  });
+}
+
+/** Mark every transaction in `ids` reviewed (or not). */
+export const setReviewed = (state: LedgerState, ids: Iterable<string>, reviewed: boolean) =>
+  mapTransactions(state, ids, (t) => (!!t.reviewed === reviewed ? t : { ...t, reviewed }));
+
+/**
+ * Set the category of every transaction in `ids` by name, creating a custom category for
+ * an unknown name.
+ */
+export function setCategory(state: LedgerState, ids: Iterable<string>, name: string): LedgerState {
+  const categories = [...state.categories];
+  const cat = ensureCategory(categories, name);
+  const next = mapTransactions(state, ids, (t) =>
+    (t.categoryId === cat.id && t.category === cat.name ? t : { ...t, category: cat.name, categoryId: cat.id }));
+  if (categories.length === state.categories.length) return next;
+  return { ...next, categories };
+}
+
+const norm = (s: string | undefined) => (s ?? '').trim().toLowerCase();
+
+/**
+ * Whether every condition the rule sets matches. The merchant condition matches either the
+ * transaction's merchant or its provider description, so a rule keeps working on new
+ * imports (whose merchant defaults to the description) after the user renames a merchant.
+ */
+export function ruleMatches(rule: Rule, t: Transaction): boolean {
+  if (rule.merchant !== undefined) {
+    const m = norm(rule.merchant);
+    if (m !== norm(t.merchant) && m !== norm(t.description)) return false;
+  }
+  if (rule.descriptionContains !== undefined && !norm(t.description).includes(norm(rule.descriptionContains))) return false;
+  if (rule.amountMin !== undefined && t.amount < rule.amountMin) return false;
+  if (rule.amountMax !== undefined && t.amount > rule.amountMax) return false;
+  return true;
+}
+
+/** The first rule (rules are in precedence order) matching `t`. */
+export const findRule = (rules: readonly Rule[], t: Transaction) => rules.find((r) => ruleMatches(r, t));
+
+/** `t` categorized by the first matching rule; `t` itself if none matches. */
+export function categorize(rules: readonly Rule[], t: Transaction): Transaction {
+  const rule = findRule(rules, t);
+  return rule && rule.categoryId !== t.categoryId ? { ...t, categoryId: rule.categoryId } : t;
+}
+
+/** The merchant key an "always categorize like this" rule uses for `t`: the provider's description. */
+export const ruleMerchant = (t: Transaction) => t.description.trim();
+
+/** A rule that only matches on this merchant (no other conditions). */
+const isMerchantRule = (r: Rule, merchant: string) =>
+  norm(r.merchant) === norm(merchant) && r.merchant !== undefined
+  && r.descriptionContains === undefined && r.amountMin === undefined && r.amountMax === undefined;
+
+/** The "always categorize like this" rule for `t`'s merchant, if there is one. */
+export const merchantRule = (rules: readonly Rule[], t: Transaction) =>
+  rules.find((r) => isMerchantRule(r, ruleMerchant(t)));
+
+/**
+ * Create (or update) the rule "always categorize this merchant as `name`", taking precedence
+ * over older rules, and apply it to the other transactions from the merchant that have not
+ * been reviewed yet. Reviewed transactions are left as the user set them.
+ */
+export function addMerchantRule(state: LedgerState, id: string, name: string): LedgerState {
+  const t = state.transactions.find((x) => x.id === id);
+  if (!t) return state;
+  const merchant = ruleMerchant(t);
+  const categories = [...state.categories];
+  const cat = ensureCategory(categories, name);
+  const existing = merchantRule(state.rules, t);
+  const rule: Rule = { id: existing?.id ?? `rule-${hashId(norm(merchant))}`, merchant, categoryId: cat.id };
+  const rules = [rule, ...state.rules.filter((r) => r !== existing)];
+  const next = { ...state, categories, rules };
+  const others = state.transactions.filter((x) => x.id !== id && !x.reviewed && ruleMatches(rule, x)).map((x) => x.id);
+  return setCategory(next, [id, ...others], cat.name);
+}
+
+/** Remove the "always categorize like this" rule for `id`'s merchant. Categories already set are kept. */
+export function removeMerchantRule(state: LedgerState, id: string): LedgerState {
+  const t = state.transactions.find((x) => x.id === id);
+  const existing = t && merchantRule(state.rules, t);
+  return existing ? { ...state, rules: state.rules.filter((r) => r !== existing) } : state;
+}
