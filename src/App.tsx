@@ -1,24 +1,31 @@
-import { useEffect, useState } from 'react';
-import { useLedger } from './store';
+import { useEffect, useRef, useState, type ComponentType } from 'react';
+import { NavIcon } from './components/icons';
+import { ROUTES, canonicalHash, parseHash, routeHref, routeLabel, type RouteId } from './lib/routes';
+import { useLedger, type Ledger } from './store';
 import Dashboard from './pages/Dashboard';
+import Accounts from './pages/Accounts';
 import Transactions from './pages/Transactions';
 import Budgets from './pages/Budgets';
 import Insights from './pages/Insights';
 import Connections from './pages/Connections';
+import Settings from './pages/Settings';
 
-const PAGES = {
-  overview: { label: 'Overview', C: Dashboard },
-  ledger: { label: 'Ledger', C: Transactions },
-  budgets: { label: 'Budgets', C: Budgets },
-  insights: { label: 'Insights', C: Insights },
-  connections: { label: 'Connections', C: Connections },
-} as const;
-type PageId = keyof typeof PAGES;
-
-const fromHash = (): PageId => {
-  const h = location.hash.slice(2);
-  return h in PAGES ? (h as PageId) : 'overview';
+const PAGES: Record<RouteId, ComponentType<{ ledger: Ledger }>> = {
+  overview: Dashboard,
+  accounts: Accounts,
+  transactions: Transactions,
+  budgets: Budgets,
+  insights: Insights,
+  connections: Connections,
+  settings: Settings,
 };
+
+/** Read the current route, rewriting the address bar if the hash is unknown or non-canonical. */
+function currentRoute(): RouteId {
+  const fix = canonicalHash(location.hash);
+  if (fix) history.replaceState(null, '', fix);
+  return parseHash(location.hash);
+}
 
 export function Logo() {
   return (
@@ -31,26 +38,41 @@ export function Logo() {
 
 export default function App() {
   const ledger = useLedger();
-  const [page, setPage] = useState<PageId>(fromHash);
+  const [route, setRoute] = useState<RouteId>(currentRoute);
+  const mainRef = useRef<HTMLElement>(null);
+  const first = useRef(true);
+
   useEffect(() => {
-    const on = () => setPage(fromHash());
+    const on = () => setRoute(currentRoute());
     addEventListener('hashchange', on);
     return () => removeEventListener('hashchange', on);
   }, []);
-  const { C } = PAGES[page];
+
+  useEffect(() => {
+    document.title = `${routeLabel(route)} · Ledgerleaf`;
+    if (first.current) { first.current = false; return; }
+    scrollTo(0, 0);
+    mainRef.current?.focus({ preventScroll: true });
+  }, [route]);
+
+  const Page = PAGES[route];
   return (
     <div className="shell">
+      <a className="skip" href="#main" onClick={(e) => { e.preventDefault(); mainRef.current?.focus(); }}>Skip to content</a>
       <aside className="rail">
-        <a className="brand" href="#/overview"><Logo /><span>Ledgerleaf</span></a>
-        <nav>
-          {(Object.keys(PAGES) as PageId[]).map((id) => (
-            <a key={id} href={`#/${id}`} className={id === page ? 'active' : ''}>{PAGES[id].label}</a>
+        <a className="brand" href={routeHref('overview')}><Logo /><span>Ledgerleaf</span></a>
+        <nav className="nav" aria-label="Main">
+          {ROUTES.map(({ id, label }) => (
+            <a key={id} href={routeHref(id)} aria-current={id === route ? 'page' : undefined}>
+              <NavIcon id={id} />
+              <span>{label}</span>
+            </a>
           ))}
         </nav>
         <p className="rail-foot">Stored only in this browser.</p>
       </aside>
-      <main>
-        <C ledger={ledger} />
+      <main id="main" ref={mainRef} tabIndex={-1}>
+        <Page ledger={ledger} />
       </main>
     </div>
   );

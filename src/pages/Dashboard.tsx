@@ -43,7 +43,7 @@ export default function Dashboard({ ledger }: { ledger: Ledger }) {
           <BarChart label="Spending per month" highlightLast bars={months.map((m) => ({ label: fmtMonth(m.month), value: m.total }))} />
         </section>
         <section className="card">
-          <h3>Recent activity <a href="#/ledger" className="more">All →</a></h3>
+          <h3>Recent activity <a href="#/transactions" className="more">All →</a></h3>
           <ul className="ruled">
             {transactions.slice(0, 7).map((t) => (
               <li key={t.id}>

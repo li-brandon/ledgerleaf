@@ -46,9 +46,7 @@ export default function Connections({ ledger }: { ledger: Ledger }) {
           {accounts.length} accounts, {transactions.length} transactions
           {lastSync && ` · last sync ${new Date(lastSync).toLocaleString()}`}. Everything lives in this browser's localStorage.
         </p>
-        <button className="danger" onClick={() => confirm('Erase all Ledgerleaf data in this browser?') && (ledger.reset(), setMsg('All local data erased.'))}>
-          Erase local data
-        </button>
+        <a className="btn ghost" href="#/settings">Manage in Settings</a>
       </section>
     </>
   );

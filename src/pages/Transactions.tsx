@@ -22,7 +22,7 @@ export default function Transactions({ ledger }: { ledger: Ledger }) {
 
   return (
     <>
-      <h1>Ledger</h1>
+      <h1>Transactions</h1>
       {!transactions.length ? <EmptyState ledger={ledger} /> : (
         <section className="card">
           <div className="filters">
@@ -37,6 +37,7 @@ export default function Transactions({ ledger }: { ledger: Ledger }) {
             </select>
           </div>
           <p className="muted">{rows.length} entries · net {fmtMoney(net)}</p>
+          <div className="table-scroll">
           <table className="tx">
             <thead><tr><th>Date</th><th>Description</th><th>Account</th><th>Category</th><th className="num">Amount</th></tr></thead>
             <tbody>
@@ -55,6 +56,7 @@ export default function Transactions({ ledger }: { ledger: Ledger }) {
               ))}
             </tbody>
           </table>
+          </div>
         </section>
       )}
     </>
