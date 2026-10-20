@@ -1,4 +1,4 @@
-import { currentMonth } from './budget';
+import { budgetId, currentMonth } from './budget';
 import { defaultCategories, ensureCategory, findCategory } from './categories';
 import {
   SCHEMA_VERSION, type Account, type Budget, type Budgets, type Category, type LedgerState, type Transaction,
@@ -20,8 +20,6 @@ export const DEFAULT_BUDGETS: Budgets = {
   Rent: 1650, Groceries: 500, Dining: 300, Shopping: 250, Transport: 150,
   Utilities: 150, Entertainment: 80, Health: 60,
 };
-
-export const budgetId = (categoryId: string, month: string) => `${categoryId}:${month}`;
 
 const list = <T>(v: unknown): T[] => (Array.isArray(v) ? v : []);
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;

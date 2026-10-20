@@ -1,4 +1,4 @@
-import { NON_SPEND, type Budgets, type Transaction } from './types';
+import { NON_SPEND, type Budget, type Budgets, type Category, type Transaction } from './types';
 
 export const monthKey = (date: string) => date.slice(0, 7);
 
@@ -51,4 +51,30 @@ export function budgetTotals(lines: BudgetLine[]) {
   };
 }
 
-export const round = (n: number) => Math.round(n * 100) / 100;
+export const budgetId = (categoryId: string, month: string) => `${categoryId}:${month}`;
+
+/**
+ * Budget amounts in effect for `month`, keyed by category name: per category, the
+ * latest record whose month is on or before `month`.
+ */
+export function budgetsForMonth(budgets: Budget[], categories: Category[], month: string): Budgets {
+  const latest = new Map<string, Budget>();
+  for (const b of budgets) {
+    const prev = latest.get(b.categoryId);
+    if (b.month <= month && (!prev || b.month > prev.month)) latest.set(b.categoryId, b);
+  }
+  const name = new Map(categories.map((c) => [c.id, c.name]));
+  return Object.fromEntries([...latest.values()].map((b) => [name.get(b.categoryId) ?? b.categoryId, b.amount]));
+}
+
+/** Set a category's budget from `month` on, keeping the rollover flag of the record it replaces. */
+export function upsertBudget(budgets: Budget[], categoryId: string, month: string, amount: number): Budget[] {
+  const id = budgetId(categoryId, month);
+  const prior = budgets
+    .filter((b) => b.categoryId === categoryId && b.month <= month)
+    .sort((a, b) => b.month.localeCompare(a.month))[0];
+  const next: Budget = { id, categoryId, month, amount, rollover: prior?.rollover ?? false };
+  return [...budgets.filter((b) => b.id !== id), next];
+}
+
+export const round =(n: number) => Math.round(n * 100) / 100;

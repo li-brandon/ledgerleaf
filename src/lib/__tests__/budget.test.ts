@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { budgetProgress, budgetTotals, currentMonth, spendByCategory } from '../budget';
+import { budgetProgress, budgetTotals, budgetsForMonth, currentMonth, spendByCategory, upsertBudget } from '../budget';
 import type { Transaction } from '../types';
 
 let n = 0;
@@ -45,4 +45,26 @@ describe('budgetProgress', () => {
 
 describe('currentMonth', () => {
   it('formats YYYY-MM', () => expect(currentMonth(new Date(2026, 0, 5))).toBe('2026-01'));
+});
+
+describe('budgetsForMonth / upsertBudget', () => {
+  const cats = [
+    { id: 'dining', name: 'Dining', group: 'g', color: '', icon: '', excludeFromSpend: false },
+    { id: 'rent', name: 'Rent', group: 'g', color: '', icon: '', excludeFromSpend: false },
+  ];
+  const b = (categoryId: string, month: string, amount: number) =>
+    ({ id: `${categoryId}:${month}`, categoryId, month, amount, rollover: false });
+
+  it('uses the latest record on or before the month, keyed by name', () => {
+    const budgets = [b('dining', '2026-08', 100), b('dining', '2026-10', 150), b('rent', '2026-11', 1700)];
+    expect(budgetsForMonth(budgets, cats, '2026-07')).toEqual({});
+    expect(budgetsForMonth(budgets, cats, '2026-09')).toEqual({ Dining: 100 });
+    expect(budgetsForMonth(budgets, cats, '2026-12')).toEqual({ Dining: 150, Rent: 1700 });
+  });
+
+  it('replaces the record for the month and carries rollover forward', () => {
+    const start = [{ ...b('dining', '2026-08', 100), rollover: true }];
+    const next = upsertBudget(upsertBudget(start, 'dining', '2026-10', 120), 'dining', '2026-10', 130);
+    expect(next).toEqual([start[0], { ...b('dining', '2026-10', 130), rollover: true }]);
+  });
 });
