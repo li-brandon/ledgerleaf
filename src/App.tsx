@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ComponentType } from 'react';
 import { NavIcon } from './components/icons';
-import { ROUTES, canonicalHash, parseHash, routeHref, routeLabel, type RouteId } from './lib/routes';
+import {
+  ROUTES, canonicalHash, parseRoute, routeHref, routeLabel, type Route, type RouteId, type RouteParams,
+} from './lib/routes';
 import { useLedger, type Ledger } from './store';
 import Dashboard from './pages/Dashboard';
 import Accounts from './pages/Accounts';
@@ -10,7 +12,13 @@ import Insights from './pages/Insights';
 import Connections from './pages/Connections';
 import Settings from './pages/Settings';
 
-const PAGES: Record<RouteId, ComponentType<{ ledger: Ledger }>> = {
+/** Every page gets the ledger and the route's query parameters. */
+export interface PageProps {
+  ledger: Ledger;
+  params: RouteParams;
+}
+
+const PAGES: Record<RouteId, ComponentType<PageProps>> = {
   overview: Dashboard,
   accounts: Accounts,
   transactions: Transactions,
@@ -21,10 +29,10 @@ const PAGES: Record<RouteId, ComponentType<{ ledger: Ledger }>> = {
 };
 
 /** Read the current route, rewriting the address bar if the hash is unknown or non-canonical. */
-function currentRoute(): RouteId {
+function currentRoute(): Route {
   const fix = canonicalHash(location.hash);
   if (fix) history.replaceState(null, '', fix);
-  return parseHash(location.hash);
+  return parseRoute(location.hash);
 }
 
 export function Logo() {
@@ -38,7 +46,7 @@ export function Logo() {
 
 export default function App() {
   const ledger = useLedger();
-  const [route, setRoute] = useState<RouteId>(currentRoute);
+  const [{ id: route, params }, setRoute] = useState<Route>(currentRoute);
   const mainRef = useRef<HTMLElement>(null);
   const first = useRef(true);
 
@@ -73,7 +81,7 @@ export default function App() {
       </aside>
       <main id="main" ref={mainRef} tabIndex={-1}>
         {ledger.error && <p className="notice" role="alert">{ledger.error}</p>}
-        {ledger.loading ? <p className="muted" role="status">Loading your ledger…</p> : <Page ledger={ledger} />}
+        {ledger.loading ? <p className="muted" role="status">Loading your ledger…</p> : <Page ledger={ledger} params={params} />}
       </main>
     </div>
   );

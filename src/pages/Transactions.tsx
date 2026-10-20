@@ -1,13 +1,20 @@
 import { useMemo, useState } from 'react';
+import type { PageProps } from '../App';
 import { fmtDate, fmtMoney } from '../format';
-import type { Ledger } from '../store';
+import { transactionsHref } from '../lib/routes';
 import EmptyState from './EmptyState';
 
-export default function Transactions({ ledger }: { ledger: Ledger }) {
+/** The account filter lives in the URL (`#/transactions?account=…`) so it survives a reload. */
+const setAcct = (id: string) => location.replace(transactionsHref(id));
+
+export default function Transactions({ ledger, params }: PageProps) {
   const { accounts, categories: known, transactions } = ledger.state;
   const [q, setQ] = useState('');
   const [cat, setCat] = useState('');
-  const [acct, setAcct] = useState('');
+  const acct = params.account ?? '';
+  const account = accounts.find((a) => a.id === acct);
+  // Hidden accounts stay out of the list unless they are the one being viewed.
+  const listed = accounts.filter((a) => !a.hidden || a.id === acct);
   const categories = useMemo(
     () => [...new Set([...known.map((c) => c.name), ...transactions.map((t) => t.category)])].sort(),
     [known, transactions],
@@ -21,7 +28,12 @@ export default function Transactions({ ledger }: { ledger: Ledger }) {
 
   return (
     <>
-      <h1>Transactions</h1>
+      <h1>Transactions {account && <small>{account.name}</small>}</h1>
+      {acct && !account && (
+        <p className="notice error" role="status">
+          That account no longer exists. <a href={transactionsHref()}>Show all transactions</a>
+        </p>
+      )}
       {!transactions.length ? <EmptyState ledger={ledger} /> : (
         <section className="card">
           <div className="filters">
@@ -32,7 +44,7 @@ export default function Transactions({ ledger }: { ledger: Ledger }) {
             </select>
             <select value={acct} onChange={(e) => setAcct(e.target.value)} aria-label="Account">
               <option value="">All accounts</option>
-              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              {listed.map((a) => <option key={a.id} value={a.id}>{a.name}{a.hidden ? ' (hidden)' : ''}</option>)}
             </select>
           </div>
           <p className="muted">{rows.length} entries · net {fmtMoney(net)}</p>
