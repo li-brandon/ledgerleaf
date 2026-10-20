@@ -1,0 +1,202 @@
+import { describe, expect, it } from 'vitest';
+import { parseCsvRows } from '../csv';
+import {
+  applyMapping, detectMapping, errorRowsCsv, mappingFor, mappingProblem, readCsvTable,
+} from '../csvMapping';
+import { emptyLedger } from '../migrate';
+import { CsvImportProvider, applySync, fetchSync, type CsvImportOptions } from '../sync';
+import type { Account, LedgerState } from '../types';
+import amex from './fixtures/amex.csv?raw';
+import chase from './fixtures/chase.csv?raw';
+import generic from './fixtures/generic.csv?raw';
+
+const now = new Date(2026, 9, 20);
+const card: Account = { id: 'csv-sample-card', name: 'Sample Card', type: 'credit' };
+
+/** What the import screen does: build a mapped provider and run it through the sync pipeline. */
+async function importCsv(state: LedgerState, text: string, options: Partial<CsvImportOptions> = {}) {
+  const mapping = options.mapping ?? detectMapping(readCsvTable(text).headers);
+  const accountId = options.accountId ?? card.id;
+  const newAccount = 'newAccount' in options ? options.newAccount : state.accounts.some((a) => a.id === accountId) ? undefined : card;
+  const p = new CsvImportProvider(text, { mapping, accountId, newAccount });
+  const outcome = applySync(state, p.id, await fetchSync(p, state), now);
+  return { ...outcome, provider: p, duplicates: outcome.received - outcome.added };
+}
+
+describe('readCsvTable', () => {
+  it('splits off the header row and makes names unique', () => {
+    const t = readCsvTable('Date,Amount,Amount\n2026-01-01,1,2');
+    expect(t).toEqual({ headers: ['Date', 'Amount', 'Amount (2)'], rows: [['2026-01-01', '1', '2']], hasHeader: true });
+  });
+
+  it('names columns when the file has no header row', () => {
+    const t = readCsvTable('2026-01-01,Tea,-3\n2026-01-02,Cake,-4,extra');
+    expect(t.hasHeader).toBe(false);
+    expect(t.headers).toEqual(['Column 1', 'Column 2', 'Column 3', 'Column 4']);
+    expect(t.rows).toHaveLength(2);
+  });
+});
+
+describe('detectMapping', () => {
+  it('maps a Chase-style export', () => {
+    expect(detectMapping(readCsvTable(chase).headers)).toEqual({
+      date: 'Transaction Date', description: 'Description', amount: 'Amount', category: 'Category',
+    });
+  });
+
+  it('maps an Amex-style export and flips its positive charges', () => {
+    expect(detectMapping(readCsvTable(amex).headers)).toEqual({
+      date: 'Date', description: 'Description', amount: 'Amount', category: 'Category', negate: true,
+    });
+  });
+
+  it('maps separate withdrawal and deposit columns', () => {
+    expect(detectMapping(readCsvTable(generic).headers)).toEqual({
+      date: 'Booking Date', description: 'Payee', debit: 'Withdrawals', credit: 'Deposits',
+    });
+  });
+
+  it('falls back to loose matches and leaves unknown fields empty', () => {
+    expect(detectMapping(['Date of purchase', 'Desc.', 'Total amount (USD)'])).toEqual({
+      date: 'Date of purchase', description: 'Desc.', amount: 'Total amount (USD)',
+    });
+    const m = detectMapping(['foo', 'bar']);
+    expect(m).toEqual({ date: '', description: '' });
+    expect(mappingProblem(m, ['foo', 'bar'])).toMatch(/date/);
+  });
+});
+
+describe('mappingProblem / mappingFor', () => {
+  const headers = ['When', 'What', 'Out', 'In'];
+  it('requires date, description and an amount source that exist in the file', () => {
+    expect(mappingProblem({ date: 'When', description: 'What', debit: 'Out' }, headers)).toBeUndefined();
+    expect(mappingProblem({ date: 'When', description: 'What' }, headers)).toMatch(/debit or credit/);
+    expect(mappingProblem({ date: 'When', description: 'What', amount: 'Sum' }, headers)).toMatch(/amount/);
+    expect(mappingProblem({ date: 'When', description: 'What', debit: 'Out', category: 'Cat' }, headers)).toMatch(/"Cat"/);
+  });
+
+  it('reuses a saved mapping only when it fits the file', () => {
+    const saved = { date: 'When', description: 'What', debit: 'Out', credit: 'In' };
+    expect(mappingFor(headers, saved)).toBe(saved);
+    expect(mappingFor(['Date', 'Description', 'Amount'], saved)).toEqual({ date: 'Date', description: 'Description', amount: 'Amount' });
+  });
+});
+
+describe('applyMapping', () => {
+  it('reads the Chase fixture and reports bad rows', () => {
+    const table = readCsvTable(chase);
+    const { transactions, errors } = applyMapping(table, detectMapping(table.headers), 'acct');
+    expect(transactions).toHaveLength(11);
+    expect(transactions[0]).toMatchObject({ date: '2026-10-14', description: 'CORNER BAKERY #12', amount: -6.25, category: 'Food & Drink', accountId: 'acct' });
+    expect(transactions[1].description).toBe('FERNWAY MARKET, INC');
+    expect(transactions.find((t) => t.description === 'NORTHWIND OUTFITTERS')?.amount).toBe(-1204.5);
+    expect(transactions.find((t) => t.description.startsWith('AUTOPAY'))).toMatchObject({ amount: 500, category: 'Other' });
+    expect(errors.map(({ row, reason }) => ({ row, reason }))).toEqual([
+      { row: 13, reason: 'Unreadable date "13/45/2026"' },
+      { row: 14, reason: 'Unreadable amount "n/a"' },
+    ]);
+  });
+
+  it('flips Amex amounts so charges are spending and refunds are income', () => {
+    const table = readCsvTable(amex);
+    const { transactions, errors } = applyMapping(table, detectMapping(table.headers), 'acct');
+    expect(transactions.map((t) => [t.date, t.description, t.amount])).toEqual([
+      ['2026-10-16', 'NORI HOUSE', -48.6],
+      ['2026-10-15', 'CINEMA LUX', -24],
+      ['2026-10-13', 'ONLINE PAYMENT - THANK YOU', 350],
+      ['2026-10-11', 'ARCADIA GAMES', -1019.99],
+      ['2026-10-09', 'SLICE & CO', 12],
+    ]);
+    expect(errors).toEqual([{ row: 7, cells: expect.any(Array), reason: 'Missing description' }]);
+  });
+
+  it('combines debit and credit columns across date formats', () => {
+    const table = readCsvTable(generic);
+    const { transactions, errors } = applyMapping(table, detectMapping(table.headers), 'acct');
+    expect(transactions.map((t) => [t.date, t.description, t.amount])).toEqual([
+      ['2026-10-01', 'Brightwater Payroll', 2900],
+      ['2026-10-02', 'Maple Street Lofts', -1650],
+      ['2026-10-03', 'Green Basket Market', -54.2],
+      ['2026-10-05', 'City Power & Water', -112.4],
+      ['2026-10-06', 'Harvest Co-op', -32.15],
+      ['2026-10-07', 'Transfer from Rainy Day Savings', 250],
+      ['2026-10-07', 'Juniper "Café"', -8.5],
+    ]);
+    expect(errors.map((e) => e.reason)).toEqual(['Missing amount', 'Unreadable date "31 Sep 2026"', 'Unreadable debit "abc"']);
+  });
+
+  it('gives identical rows distinct but stable ids', () => {
+    const table = readCsvTable(chase);
+    const ids = () => applyMapping(table, detectMapping(table.headers), 'acct').transactions.map((t) => t.id);
+    expect(ids()).toEqual(ids());
+    expect(new Set(ids()).size).toBe(11);
+  });
+
+  it('refuses a mapping that does not fit the file', () => {
+    expect(() => applyMapping(readCsvTable(chase), { date: 'Nope', description: 'Description', amount: 'Amount' }, 'a')).toThrow(/date/);
+  });
+});
+
+describe('errorRowsCsv', () => {
+  it('round-trips the failed rows with their reasons', () => {
+    const table = readCsvTable(amex);
+    const { errors } = applyMapping(table, detectMapping(table.headers), 'acct');
+    const rows = parseCsvRows(errorRowsCsv(table, errors));
+    expect(rows[0]).toEqual([...table.headers, 'Error']);
+    expect(rows).toHaveLength(2);
+    expect(rows[1].slice(0, -1)).toEqual(table.rows[5]);
+    expect(rows[1].at(-1)).toBe('Row 7: Missing description');
+  });
+
+  it('quotes commas, quotes and newlines', () => {
+    const table = { headers: ['A', 'B'], rows: [], hasHeader: true };
+    const text = errorRowsCsv(table, [{ row: 2, cells: ['x, "y"', 'two\nlines'], reason: 'bad' }]);
+    expect(text).toBe('A,B,Error\r\n"x, ""y""","two\nlines",Row 2: bad\r\n');
+  });
+});
+
+describe('importing through the sync pipeline', () => {
+  it.each([['Chase', chase, 11, 2], ['Amex', amex, 5, 1], ['generic', generic, 7, 3]])(
+    'imports the %s fixture into a new account, and adds 0 when re-imported',
+    async (_, text, rows, bad) => {
+      const first = await importCsv(emptyLedger('2026-10'), text);
+      expect(first).toMatchObject({ added: rows, duplicates: 0 });
+      expect(first.provider.skipped).toBe(bad);
+      expect(first.state.accounts).toEqual([expect.objectContaining({ ...card, currency: 'USD' })]);
+      expect(first.state.transactions.every((t) => t.source === 'csv' && t.accountId === card.id)).toBe(true);
+      expect(first.state.syncs?.csv).toEqual({ lastSync: now.toISOString() });
+
+      const again = await importCsv(first.state, text);
+      expect(again).toMatchObject({ added: 0, updated: 0, duplicates: rows });
+      expect(again.state.transactions).toHaveLength(rows);
+    },
+  );
+
+  it('imports into an existing account without changing it', async () => {
+    const base = { ...emptyLedger('2026-10'), accounts: [{ id: 'mine', name: 'Everyday', type: 'checking', currency: 'USD', hidden: false } as Account] };
+    const r = await importCsv(base, generic, { accountId: 'mine', newAccount: undefined });
+    expect(r.added).toBe(7);
+    expect(r.state.accounts).toEqual(base.accounts);
+    expect(r.state.transactions.every((t) => t.accountId === 'mine')).toBe(true);
+  });
+
+  it('keeps the same file in two accounts apart', async () => {
+    const a = await importCsv(emptyLedger('2026-10'), chase);
+    const other: Account = { id: 'csv-other', name: 'Other', type: 'credit' };
+    const b = await importCsv(a.state, chase, { accountId: other.id, newAccount: other });
+    expect(b.added).toBe(11);
+  });
+
+  it('skips only the overlap when a later export repeats earlier rows', async () => {
+    const lines = chase.trim().split(/\r?\n/);
+    const older = [lines[0], ...lines.slice(6, 12)].join('\n');
+    const first = await importCsv(emptyLedger('2026-10'), older);
+    const full = await importCsv(first.state, chase);
+    expect(first.added).toBe(6);
+    expect(full).toMatchObject({ added: 5, duplicates: 6 });
+  });
+
+  it('rejects the import when the target account does not exist', async () => {
+    await expect(importCsv(emptyLedger('2026-10'), chase, { accountId: 'ghost', newAccount: undefined })).rejects.toThrow(/unknown account/);
+  });
+});
