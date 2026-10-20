@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { emptyLedger } from '../migrate';
+import { applyRules } from '../rules';
 import {
   addMerchantRule, editTransaction, merchantRule, removeMerchantRule, reviewCount, setCategory, setReviewed,
 } from '../txEdits';
@@ -42,6 +43,35 @@ describe('editTransaction', () => {
     const s = ledger([tx('a', { notes: 'n' })]);
     expect(editTransaction(s, 'a', { merchant: 'a', notes: 'n', reviewed: false })).toBe(s);
     expect(editTransaction(s, 'nope', { notes: 'hi' })).toBe(s);
+  });
+});
+
+describe('manual edits win over rules', () => {
+  const rules: Rule[] = [{ id: 'r', categoryId: 'dining', merchantContains: 'cafe', renameMerchant: 'Cafe' }];
+
+  it('marks a renamed merchant as the user\'s, and a blank one as the provider\'s again', () => {
+    const s = ledger([tx('SQ *CAFE')], rules);
+    const renamed = editTransaction(s, 'SQ *CAFE', { merchant: 'Corner Cafe' });
+    expect(byId(renamed, 'SQ *CAFE')).toMatchObject({ merchant: 'Corner Cafe', merchantEdited: true });
+    expect(applyRules(rules, byId(renamed, 'SQ *CAFE')).merchant).toBe('Corner Cafe');
+    const cleared = editTransaction(renamed, 'SQ *CAFE', { merchant: '' });
+    expect(byId(cleared, 'SQ *CAFE')).not.toHaveProperty('merchantEdited');
+    expect(applyRules(rules, byId(cleared, 'SQ *CAFE')).merchant).toBe('Cafe');
+  });
+
+  it('marks a category set by hand as the user\'s', () => {
+    const s = ledger([tx('SQ *CAFE'), tx('b')], rules);
+    const next = setCategory(s, ['SQ *CAFE'], 'Travel');
+    expect(byId(next, 'SQ *CAFE')).toMatchObject({ categoryId: 'travel', categoryEdited: true });
+    expect(byId(next, 'b')).not.toHaveProperty('categoryEdited');
+    expect(applyRules(rules, byId(next, 'SQ *CAFE')).categoryId).toBe('travel');
+    expect(byId(setCategory(s, ['b'], 'Travel', false), 'b')).not.toHaveProperty('categoryEdited');
+  });
+
+  it('does not let a new merchant rule override categories picked by hand', () => {
+    const s = setCategory(ledger([tx('t1', { description: 'CAFE' }), tx('t2', { description: 'CAFE' })]), ['t2'], 'Travel');
+    const next = addMerchantRule(s, 't1', 'Dining');
+    expect(next.transactions.map((t) => [t.categoryId, !!t.categoryEdited])).toEqual([['dining', true], ['travel', true]]);
   });
 });
 
