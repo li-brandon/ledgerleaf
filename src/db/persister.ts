@@ -7,6 +7,11 @@ export interface Persister {
   schedule(state: LedgerState): void;
   /** Write any queued state now; resolves once everything scheduled so far is stored. */
   flush(): Promise<void>;
+  /**
+   * Write `state` now, after anything already queued, superseding a pending schedule.
+   * Rejects if the write fails; the repository applies it atomically, so nothing is stored then.
+   */
+  commit(state: LedgerState): Promise<void>;
 }
 
 /**
@@ -20,21 +25,23 @@ export function createPersister(
   let timer: ReturnType<typeof setTimeout> | undefined;
   let chain = Promise.resolve();
 
+  /** Queue a write. The chain itself never rejects; `report` sees failures there. */
+  function save(next: LedgerState, report?: (e: unknown) => void) {
+    const done = chain.then(async () => {
+      if (next === saved) return;
+      await saveLedger(repo, next, saved);
+      saved = next;
+    });
+    chain = done.catch((e) => report?.(e));
+    return done;
+  }
+
   function flush() {
     clearTimeout(timer);
     timer = undefined;
     const next = pending;
     pending = undefined;
-    if (next && next !== saved) {
-      chain = chain.then(async () => {
-        try {
-          await saveLedger(repo, next, saved);
-          saved = next;
-        } catch (e) {
-          onError(e);
-        }
-      });
-    }
+    if (next && next !== saved) void save(next, onError);
     return chain;
   }
 
@@ -45,5 +52,11 @@ export function createPersister(
       timer = setTimeout(flush, delay);
     },
     flush,
+    commit(state) {
+      clearTimeout(timer);
+      timer = undefined;
+      pending = undefined;
+      return save(state);
+    },
   };
 }
