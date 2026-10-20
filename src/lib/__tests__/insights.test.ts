@@ -164,6 +164,16 @@ describe('spendHref', () => {
     expect(txns.filter(match).map((t) => t.description)).toEqual(['Nori House', 'Slice & Co']);
   });
 
+  it('opens several categories at once, adding up to their combined spend', () => {
+    const href = spendHref(['2026-10'], { category: ['Dining', 'Groceries'] });
+    expect(href).toContain('category=Dining%2CGroceries');
+    const shown = txns.filter(matcher(parseFilters(parseRoute(href).params)));
+    const rows = monthlySpend(txns, ['2026-10']);
+    expect(-shown.reduce((s, t) => s + t.amount, 0)).toBe(rows[0].byCategory.Dining + rows[0].byCategory.Groceries);
+    // Transfers and income are never pulled in.
+    expect(shown.map((t) => t.category)).not.toContain('Transfer');
+  });
+
   it('filters by merchant', () => {
     const match = matcher(parseFilters(parseRoute(spendHref(monthRange('2026-10', 3), { merchant: 'Nori House' })).params));
     expect(txns.filter(match)).toHaveLength(2);

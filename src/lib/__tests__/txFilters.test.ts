@@ -105,6 +105,11 @@ describe('matcher', () => {
     expect(run({ category: 'rent' })).toEqual(['Rent']);
   });
 
+  it('filters by any of several comma-separated categories', () => {
+    expect(run({ category: 'Rent, dining' })).toEqual(['Rent', 'SQ *BLUE BOTTLE']);
+    expect(run({ category: 'rent,,' })).toEqual(['Rent']);
+  });
+
   it('filters by an inclusive date range, swapping reversed bounds', () => {
     expect(run({ from: '2026-10-02', to: '2026-10-03' })).toEqual(['SQ *BLUE BOTTLE', 'Paycheck', 'Zero']);
     expect(run({ from: '2026-10-03', to: '2026-10-02' })).toEqual(['SQ *BLUE BOTTLE', 'Paycheck', 'Zero']);
