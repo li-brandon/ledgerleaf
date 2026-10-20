@@ -10,6 +10,7 @@ import Accounts from './pages/Accounts';
 import Transactions from './pages/Transactions';
 import Budgets from './pages/Budgets';
 import Insights from './pages/Insights';
+import Recurring from './pages/Recurring';
 import Connections from './pages/Connections';
 import Settings from './pages/Settings';
 import Categories from './pages/Categories';
@@ -25,6 +26,7 @@ const PAGES: Record<RouteId, ComponentType<PageProps>> = {
   accounts: Accounts,
   transactions: Transactions,
   budgets: Budgets,
+  recurring: Recurring,
   insights: Insights,
   connections: Connections,
   settings: Settings,

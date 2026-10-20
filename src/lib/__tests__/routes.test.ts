@@ -27,6 +27,7 @@ describe('parseHash', () => {
   it('maps legacy aliases', () => {
     expect(parseHash('#/ledger')).toBe('transactions');
     expect(parseHash('#/dashboard')).toBe('overview');
+    expect(parseHash('#/subscriptions')).toBe('recurring');
   });
 });
 
@@ -83,7 +84,7 @@ describe('canonicalHash', () => {
 describe('route table', () => {
   it('has the nav items in order with unique ids', () => {
     expect(ROUTES.map((r) => r.label)).toEqual([
-      'Overview', 'Accounts', 'Transactions', 'Budgets', 'Insights', 'Connections', 'Settings',
+      'Overview', 'Accounts', 'Transactions', 'Budgets', 'Recurring', 'Insights', 'Connections', 'Settings',
     ]);
     expect(new Set(ROUTES.map((r) => r.id)).size).toBe(ROUTES.length);
   });

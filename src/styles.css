@@ -334,6 +334,19 @@ button.link:disabled { color: var(--color-text-muted); text-decoration: none; op
 .apply-rules { border-top: 1px solid var(--color-border); padding-top: var(--space-4); }
 .apply-rules .check { margin-bottom: var(--space-2); }
 
+/* ---------- Recurring ---------- */
+.rec-table td { vertical-align: top; padding-top: var(--space-2); padding-bottom: var(--space-2); }
+.rec-table td:first-child { min-width: 200px; }
+.rec-name { color: var(--color-text); font-weight: 600; text-decoration: none; }
+.rec-name:hover { color: var(--color-accent); text-decoration: underline; }
+.rec-tag { margin-left: var(--space-2); white-space: nowrap; }
+.rec-tag:not(.ok):not(.over):not(.near) { color: var(--color-text-muted); }
+.rec-meta { display: block; font-style: normal; font-size: 12px; color: var(--color-text-muted); }
+.rec-act { text-align: right; white-space: nowrap; }
+.rec-actions { display: inline-flex; gap: var(--space-3); }
+.cat-form > p.muted { grid-column: 1 / -1; margin: 0; }
+details > .table-scroll { margin-top: var(--space-2); }
+
 /* ---------- Responsive ---------- */
 @media (max-width: 1100px) {
   :root { --rail-width: 196px; }

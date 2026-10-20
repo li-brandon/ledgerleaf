@@ -5,6 +5,7 @@ export const ROUTES = [
   { id: 'accounts', label: 'Accounts' },
   { id: 'transactions', label: 'Transactions' },
   { id: 'budgets', label: 'Budgets' },
+  { id: 'recurring', label: 'Recurring' },
   { id: 'insights', label: 'Insights' },
   { id: 'connections', label: 'Connections' },
   { id: 'settings', label: 'Settings' },
@@ -31,6 +32,7 @@ const ALIASES = new Map<string, RouteId>([
   ['dashboard', 'overview'],
   ['home', 'overview'],
   ['rules', 'categories'],
+  ['subscriptions', 'recurring'],
 ]);
 
 export const isRouteId = (s: string): s is RouteId => IDS.has(s);
