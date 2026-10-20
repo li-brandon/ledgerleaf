@@ -28,7 +28,7 @@ describe.each(ADAPTERS)('syncing into %s', (_, open) => {
     const { repo, initial, persister } = await setup();
     const first = await sync(initial, new MockProvider(now), persister.commit);
     const stored = await readLedger(repo);
-    expect(stored?.syncs).toEqual({ mock: { lastSync: now.toISOString() } });
+    expect(stored?.syncs).toEqual({ demo: { lastSync: now.toISOString() } });
     expect(stored?.transactions).toHaveLength(first.added);
 
     const again = await sync(stored!, new MockProvider(now), persister.commit);

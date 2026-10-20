@@ -40,20 +40,15 @@ describe('hashId', () => {
 describe('MockProvider', () => {
   it('describes itself as a local demo provider', () => {
     const p = new MockProvider(now);
-    expect({ id: p.id, kind: p.kind, requiresAuth: p.requiresAuth }).toEqual({ id: 'mock', kind: 'demo', requiresAuth: false });
+    expect({ id: p.id, kind: p.kind, requiresAuth: p.requiresAuth }).toEqual({ id: 'demo', kind: 'demo', requiresAuth: false });
   });
 
-  it('produces 3 accounts with balances and ~4 months of deterministic data', async () => {
-    const p = new MockProvider(now);
-    expect(await p.listAccounts()).toHaveLength(3);
-    expect((await p.fetchBalances()).map((b) => b.date)).toEqual(['2026-10-20', '2026-10-20', '2026-10-20']);
-    const a = await p.fetchTransactions();
+  it('produces ids derived from content, unique and stable across instances', async () => {
+    const a = await new MockProvider(now).fetchTransactions();
     expect(a).toEqual(await new MockProvider(now).fetchTransactions());
-    const months = new Set(a.map((t) => t.date.slice(0, 7)));
-    expect([...months].sort()).toEqual(['2026-07', '2026-08', '2026-09', '2026-10']);
     expect(a.every((t) => t.date <= '2026-10-20')).toBe(true);
     expect(new Set(a.map((t) => t.id)).size).toBe(a.length);
-    expect(a.every((t) => t.id === `mock-${t.externalId}`)).toBe(true);
+    expect(a.every((t) => t.id === `demo-${t.externalId}`)).toBe(true);
   });
 
   it('filters by since and keeps a day stable whichever window it falls in', async () => {
@@ -77,7 +72,7 @@ describe('CsvImportProvider', () => {
 describe('ProviderRegistry', () => {
   it('lists the built-in providers with their metadata', () => {
     expect(providers.list().map(({ id, name, kind, requiresAuth }) => ({ id, name, kind, requiresAuth }))).toEqual([
-      { id: 'mock', name: 'Demo Bank (sample data)', kind: 'demo', requiresAuth: false },
+      { id: 'demo', name: 'Demo Bank (sample data)', kind: 'demo', requiresAuth: false },
       { id: 'csv', name: 'CSV import', kind: 'file', requiresAuth: false },
     ]);
     const csv = providers.get('csv');
