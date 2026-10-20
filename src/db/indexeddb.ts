@@ -50,7 +50,7 @@ function idbRepository(db: IDBPDatabase<LedgerDB>): Repository {
       put: async (v) => { await raw.put(name, v); },
       putMany: async (vs) => {
         const tx = raw.transaction(name, 'readwrite');
-        await Promise.all([...vs.map((v) => tx.store.put(v)), tx.done]);
+        await commit(tx, (ops) => { for (const v of vs) ops.push(tx.store.put(v)); });
       },
       delete: (k) => raw.delete(name, k),
       clear: () => raw.clear(name),
@@ -58,8 +58,8 @@ function idbRepository(db: IDBPDatabase<LedgerDB>): Repository {
     };
   }
 
-  async function readMeta(tx = db.transaction('meta')): Promise<Meta> {
-    const [keys, values] = await Promise.all([tx.store.getAllKeys(), tx.store.getAll()]);
+  async function readMeta(os = db.transaction('meta').store): Promise<Meta> {
+    const [keys, values] = await Promise.all([os.getAllKeys(), os.getAll()]);
     return Object.fromEntries(keys.map((k, i) => [k, values[i]])) as Meta;
   }
 
@@ -78,7 +78,7 @@ function idbRepository(db: IDBPDatabase<LedgerDB>): Repository {
       get: () => readMeta(),
       async set(meta) {
         const tx = db.transaction('meta', 'readwrite');
-        await Promise.all([tx.store.clear(), ...writeMeta(tx.store, meta), tx.done]);
+        await commit(tx, (ops) => ops.push(tx.store.clear(), ...writeMeta(tx.store, meta)));
       },
     },
 
@@ -86,7 +86,7 @@ function idbRepository(db: IDBPDatabase<LedgerDB>): Repository {
       const tx = raw.transaction(STORES, 'readonly');
       const [lists, meta] = await Promise.all([
         Promise.all(MODEL_NAMES.map((n) => tx.objectStore(n).getAll())),
-        readMeta(tx as never),
+        readMeta(tx.objectStore('meta') as never),
       ]);
       await tx.done;
       const records = Object.fromEntries(MODEL_NAMES.map((n, i) => [n, lists[i]])) as unknown as LedgerRecords;
@@ -95,24 +95,40 @@ function idbRepository(db: IDBPDatabase<LedgerDB>): Repository {
 
     async apply(changes: LedgerChanges) {
       const tx = raw.transaction(STORES, 'readwrite');
-      // Requests are queued without awaiting each one; IndexedDB runs them in order and
-      // aborts the whole transaction (rolling everything back) if any of them fails.
-      const ops: Promise<unknown>[] = [];
-      if (changes.clear) for (const n of STORES) ops.push(tx.objectStore(n).clear());
-      for (const n of MODEL_NAMES) {
-        const os = tx.objectStore(n);
-        for (const k of changes.delete?.[n] ?? []) ops.push(os.delete(k));
-        for (const v of changes.put?.[n] ?? []) ops.push(os.put(v));
-      }
-      if (changes.meta) {
-        const os = tx.objectStore('meta');
-        ops.push(os.clear(), ...writeMeta(os, changes.meta));
-      }
-      await Promise.all([...ops, tx.done]);
+      await commit(tx, (ops) => {
+        if (changes.clear) for (const n of STORES) ops.push(tx.objectStore(n).clear());
+        for (const n of MODEL_NAMES) {
+          const os = tx.objectStore(n);
+          for (const k of changes.delete?.[n] ?? []) ops.push(os.delete(k));
+          for (const v of changes.put?.[n] ?? []) ops.push(os.put(v));
+        }
+        if (changes.meta) {
+          const os = tx.objectStore('meta');
+          ops.push(os.clear(), ...writeMeta(os, changes.meta));
+        }
+      });
     },
 
     close: () => db.close(),
   };
+}
+
+/**
+ * Queue requests on `tx` without awaiting each one (IndexedDB runs them in order) and wait
+ * for the commit. A failed request aborts the whole transaction. Some errors, such as
+ * DataCloneError, throw synchronously instead, which would let the requests queued so far
+ * commit; abort explicitly in that case so nothing partial lands.
+ */
+async function commit(tx: { abort(): void; done: Promise<void> }, queue: (ops: Promise<unknown>[]) => void) {
+  const ops: Promise<unknown>[] = [];
+  try {
+    queue(ops);
+  } catch (e) {
+    tx.abort();
+    await Promise.allSettled([...ops, tx.done]);
+    throw e;
+  }
+  await Promise.all([...ops, tx.done]);
 }
 
 function writeMeta(os: { put(value: never, key: never): Promise<unknown> }, meta: Meta) {
