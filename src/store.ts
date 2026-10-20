@@ -1,28 +1,62 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPersister, loadLedger, openRepository, type Persister, type Repository } from './db';
 import { currentMonth, upsertBudget } from './lib/budget';
 import { ensureCategory } from './lib/categories';
-import { V1_KEY, V2_KEY, emptyLedger, migrate, normalizeLedger } from './lib/migrate';
+import { emptyLedger, normalizeLedger } from './lib/migrate';
 import { mergeSync, type SyncProvider } from './lib/sync';
 import type { LedgerState } from './lib/types';
 
 export type { LedgerState };
 
-/** Read v2, else migrate the v1 save (left in place as a backup), else start empty. */
-function load(): LedgerState {
-  try {
-    const raw = localStorage.getItem(V2_KEY) ?? localStorage.getItem(V1_KEY);
-    return raw ? migrate(JSON.parse(raw)) : emptyLedger();
-  } catch {
-    return emptyLedger();
-  }
-}
-
-export function useLedger() {
-  const [state, setState] = useState<LedgerState>(load);
+/**
+ * The ledger, loaded asynchronously from the repository (IndexedDB by default). `state` is
+ * an empty placeholder while `loading`; afterwards every change is persisted in the
+ * background, debounced and diffed against the last save.
+ */
+export function useLedger(open: () => Promise<Repository> = openRepository) {
+  const [state, setState] = useState<LedgerState>(emptyLedger);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const latest = useRef(state);
+  const persister = useRef<Persister | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    let repo: Repository | undefined;
+    let saver: Persister | undefined;
+    const flush = () => void saver?.flush();
+    const onVisibility = () => document.visibilityState === 'hidden' && flush();
+
+    (async () => {
+      repo = await open();
+      const loaded = !cancelled && (await loadLedger(repo));
+      if (cancelled || !loaded) return repo.close();
+      saver = persister.current = createPersister(repo, loaded);
+      latest.current = loaded;
+      setState(loaded);
+      setLoading(false);
+    })().catch((e) => {
+      console.error(e);
+      if (cancelled) return;
+      setError('Could not open local storage. Changes will not be saved.');
+      setLoading(false);
+    });
+    addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      cancelled = true;
+      removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (persister.current === saver) persister.current = undefined;
+      const r = repo;
+      if (saver && r) void saver.flush().then(() => r.close());
+    };
+  }, [open]);
+
   useEffect(() => {
     latest.current = state;
-    localStorage.setItem(V2_KEY, JSON.stringify(state));
+    persister.current?.schedule(state);
   }, [state]);
 
   const runSync = useCallback(async (provider: SyncProvider) => {
@@ -52,7 +86,7 @@ export function useLedger() {
 
   const reset = useCallback(() => setState(emptyLedger()), []);
 
-  return { state, runSync, setCategory, setBudget, reset };
+  return { state, loading, error, runSync, setCategory, setBudget, reset };
 }
 
 export type Ledger = ReturnType<typeof useLedger>;
