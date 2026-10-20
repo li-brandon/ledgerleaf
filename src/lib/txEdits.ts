@@ -3,6 +3,7 @@
  * "always categorize like this" rules they can create. Pure, so it can be unit tested.
  */
 import { ensureCategory } from './categories';
+import { isMerchantOnly, ruleMatches } from './rules';
 import { hashId } from './sync/hash';
 import type { LedgerState, Rule, Transaction } from './types';
 
@@ -69,38 +70,11 @@ export function setCategory(state: LedgerState, ids: Iterable<string>, name: str
 
 const norm = (s: string | undefined) => (s ?? '').trim().toLowerCase();
 
-/**
- * Whether every condition the rule sets matches. The merchant condition matches either the
- * transaction's merchant or its provider description, so a rule keeps working on new
- * imports (whose merchant defaults to the description) after the user renames a merchant.
- */
-export function ruleMatches(rule: Rule, t: Transaction): boolean {
-  if (rule.merchant !== undefined) {
-    const m = norm(rule.merchant);
-    if (m !== norm(t.merchant) && m !== norm(t.description)) return false;
-  }
-  if (rule.descriptionContains !== undefined && !norm(t.description).includes(norm(rule.descriptionContains))) return false;
-  if (rule.amountMin !== undefined && t.amount < rule.amountMin) return false;
-  if (rule.amountMax !== undefined && t.amount > rule.amountMax) return false;
-  return true;
-}
-
-/** The first rule (rules are in precedence order) matching `t`. */
-export const findRule = (rules: readonly Rule[], t: Transaction) => rules.find((r) => ruleMatches(r, t));
-
-/** `t` categorized by the first matching rule; `t` itself if none matches. */
-export function categorize(rules: readonly Rule[], t: Transaction): Transaction {
-  const rule = findRule(rules, t);
-  return rule && rule.categoryId !== t.categoryId ? { ...t, categoryId: rule.categoryId } : t;
-}
-
 /** The merchant key an "always categorize like this" rule uses for `t`: the provider's description. */
 export const ruleMerchant = (t: Transaction) => t.description.trim();
 
 /** A rule that only matches on this merchant (no other conditions). */
-const isMerchantRule = (r: Rule, merchant: string) =>
-  norm(r.merchant) === norm(merchant) && r.merchant !== undefined
-  && r.descriptionContains === undefined && r.amountMin === undefined && r.amountMax === undefined;
+const isMerchantRule = (r: Rule, merchant: string) => isMerchantOnly(r) && norm(r.merchant) === norm(merchant);
 
 /** The "always categorize like this" rule for `t`'s merchant, if there is one. */
 export const merchantRule = (rules: readonly Rule[], t: Transaction) =>

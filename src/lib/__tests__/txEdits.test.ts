@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { emptyLedger } from '../migrate';
 import {
-  addMerchantRule, categorize, editTransaction, findRule, merchantRule, removeMerchantRule, reviewCount, ruleMatches,
-  setCategory, setReviewed,
+  addMerchantRule, editTransaction, merchantRule, removeMerchantRule, reviewCount, setCategory, setReviewed,
 } from '../txEdits';
 import type { LedgerState, Rule, Transaction } from '../types';
 
@@ -72,29 +71,6 @@ describe('bulk edits', () => {
     expect(byId(next, 'a')).toMatchObject({ category: 'Coffee Shops', categoryId: 'coffee-shops' });
     expect(next.categories).toHaveLength(s.categories.length + 1);
     expect(s.categories.some((c) => c.id === 'coffee-shops')).toBe(false);
-  });
-});
-
-describe('rules', () => {
-  it('matches every condition that is set', () => {
-    const t = tx('a', { description: 'SQ *BLUE BOTTLE 123', merchant: 'Blue Bottle', amount: -6 });
-    expect(ruleMatches({ id: 'r', categoryId: 'dining', merchant: 'blue bottle' }, t)).toBe(true);
-    expect(ruleMatches({ id: 'r', categoryId: 'dining', merchant: 'sq *blue bottle 123' }, t)).toBe(true);
-    expect(ruleMatches({ id: 'r', categoryId: 'dining', merchant: 'Blue' }, t)).toBe(false);
-    expect(ruleMatches({ id: 'r', categoryId: 'dining', descriptionContains: 'blue bottle' }, t)).toBe(true);
-    expect(ruleMatches({ id: 'r', categoryId: 'dining', descriptionContains: 'blue', amountMin: -5 }, t)).toBe(false);
-    expect(ruleMatches({ id: 'r', categoryId: 'dining', amountMin: -10, amountMax: -5 }, t)).toBe(true);
-  });
-
-  it('uses the first matching rule', () => {
-    const rules: Rule[] = [
-      { id: 'big', categoryId: 'shopping', descriptionContains: 'amzn', amountMax: -100 },
-      { id: 'any', categoryId: 'groceries', descriptionContains: 'amzn' },
-    ];
-    expect(findRule(rules, tx('AMZN Mktp', { amount: -150 }))?.id).toBe('big');
-    expect(categorize(rules, tx('AMZN Fresh', { amount: -30 })).categoryId).toBe('groceries');
-    const other = tx('Bakery');
-    expect(categorize(rules, other)).toBe(other);
   });
 });
 

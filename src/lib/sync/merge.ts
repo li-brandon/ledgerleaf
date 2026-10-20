@@ -1,4 +1,4 @@
-import { categorize } from '../txEdits';
+import { applyRules } from '../rules';
 import type { Account, Rule, Transaction } from '../types';
 import type { SyncResult } from './types';
 
@@ -49,7 +49,8 @@ function freeId(id: string, taken: Map<string, unknown>) {
  * existing one by {@link dedupeKey}, or by id when the two come from the same source and
  * do not carry different externalIds. Matches only refresh provider-owned fields, so user
  * edits survive re-syncs. `incoming.balances` update account balances. New transactions
- * always arrive unreviewed, categorized by the first matching rule in `existing.rules`.
+ * always arrive unreviewed, categorized (and possibly renamed) by the first matching rule
+ * in `existing.rules`.
  */
 export function mergeSync(
   existing: Pick<SyncResult, 'accounts' | 'transactions'> & { rules?: readonly Rule[] },
@@ -95,7 +96,7 @@ export function mergeSync(
     }
     // A different transaction already has this id (e.g. another source): keep both, and
     // remember the provider's id as externalId so the next sync still finds this one.
-    const fresh = categorize(rules, { ...t, reviewed: false });
+    const fresh = applyRules(rules, { ...t, reviewed: false });
     const row = byId.has(t.id) ? { ...fresh, id: freeId(t.id, byId), externalId: t.externalId ?? t.id } : { ...fresh };
     index(row, transactions.push(row) - 1);
     added++;

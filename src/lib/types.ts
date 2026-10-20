@@ -45,6 +45,10 @@ export interface Transaction {
   source?: string;
   /** The provider's own id for this transaction. */
   externalId?: string;
+  /** The user chose the category by hand; rules never change it. */
+  categoryEdited?: boolean;
+  /** The user renamed the merchant by hand; rules never rename it. */
+  merchantEdited?: boolean;
 }
 
 export interface Category {
@@ -57,17 +61,34 @@ export interface Category {
   excludeFromSpend: boolean;
 }
 
-/** Auto-categorisation rule. Every condition that is set must match. */
+/**
+ * Auto-categorisation rule. Every condition that is set must match. Rules are kept in
+ * priority order: the first matching rule wins. Text conditions are case-insensitive;
+ * merchant conditions match either the merchant or the provider's description, so a rule
+ * keeps matching after a merchant is renamed.
+ */
 export interface Rule {
   id: string;
-  /** Case-insensitive exact merchant match. */
+  /** Exact merchant match. */
   merchant?: string;
-  /** Case-insensitive substring of the description. */
+  /** Substring of the merchant. */
+  merchantContains?: string;
+  /** Regular expression tested against the merchant. */
+  merchantRegex?: string;
+  /** Substring of the description. */
   descriptionContains?: string;
+  /** Regular expression tested against the description. */
+  descriptionRegex?: string;
+  /** Exact amount (signed, same convention as Transaction.amount). */
+  amountEquals?: number;
   /** Inclusive amount bounds (signed, same convention as Transaction.amount). */
   amountMin?: number;
   amountMax?: number;
+  /** Only transactions in this account. */
+  accountId?: string;
   categoryId: string;
+  /** Also rename the merchant to this. */
+  renameMerchant?: string;
 }
 
 /** Budget for one category, effective from `month` until a later record replaces it. */
