@@ -274,3 +274,43 @@ describe('describeConditions', () => {
     expect(countMatches(rule('r', { descriptionContains: 'a' }), [tx('a'), tx('ab'), tx('c')])).toBe(2);
   });
 });
+
+describe('amount ranges and literal text', () => {
+  const big = tx('big', { amount: -120 });
+  const mid = tx('mid', { amount: -50 });
+  const small = tx('small', { amount: -4.99 });
+  const refund = tx('refund', { amount: 50 });
+
+  it('matches signed amounts within an inclusive range', () => {
+    const r = rule('r', { amountMin: -50, amountMax: -5 });
+    expect([big, mid, small, refund].filter((t) => ruleMatches(r, t)).map((t) => t.id)).toEqual(['mid']);
+    expect(ruleMatches(rule('r', { amountMax: -100 }), big)).toBe(true);
+    expect(ruleMatches(rule('r', { amountMin: 0 }), refund)).toBe(true);
+    expect(ruleMatches(rule('r', { amountMin: 0 }), small)).toBe(false);
+  });
+
+  it('needs every condition to hold together', () => {
+    const r = rule('r', { merchantContains: 'mid', amountMax: -40, accountId: 'a1' });
+    expect(ruleMatches(r, mid)).toBe(true);
+    expect(ruleMatches(r, { ...mid, accountId: 'a2' })).toBe(false);
+    expect(ruleMatches(r, { ...mid, amount: -39.99 })).toBe(false);
+  });
+
+  it('treats contains text literally, ignoring case', () => {
+    const t = tx('amzn', { description: 'AMZN Mktp US*2K4 (Prime)', merchant: undefined });
+    expect(ruleMatches(rule('r', { descriptionContains: 'mktp us*2k4 (prime' }), t)).toBe(true);
+    expect(ruleMatches(rule('r', { merchantContains: 'us*2k4' }), t)).toBe(true);
+    expect(ruleMatches(rule('r', { descriptionContains: '.*' }), t)).toBe(false);
+  });
+
+  it('rejects an inverted range and round-trips a one-sided one through the editor', () => {
+    const cats = emptyLedger('2026-10').categories;
+    expect(validateRule(rule('r', { amountMin: -5, amountMax: -50 }), cats)).toBe('The minimum amount is above the maximum.');
+    expect(validateRule(rule('r', { amountMin: Number.NaN }), cats)).toBe('Amounts must be numbers.');
+    const r = rule('r', { amountMax: -100 });
+    expect(ruleToDraft(r)).toMatchObject({ amountOp: 'range', amount: '', amountMax: '-100' });
+    expect(draftToRule(ruleToDraft(r), 'r', cats)).toEqual({ rule: r });
+    expect(describeConditions(rule('r', { amountMin: -50, amountMax: -5.5 }))).toEqual(['amount between −$50 and −$5.50']);
+    expect(describeConditions(r)).toEqual(['amount at most −$100']);
+  });
+});

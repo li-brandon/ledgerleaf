@@ -379,3 +379,33 @@ describe('fetchSync errors', () => {
     expect(r.transactions).toHaveLength(1);
   });
 });
+
+describe('mergeSync edge cases', () => {
+  it('ignores reported balances for accounts it does not know', () => {
+    const r = mergeSync({ accounts: [account], transactions: [] }, {
+      accounts: [], transactions: [], balances: [{ accountId: 'a1', balance: 42 }, { accountId: 'nope', balance: 9 }],
+    });
+    expect(r.accounts).toEqual([{ ...account, balance: 42 }]);
+  });
+
+  it('updates a provider row in place when its date or amount is corrected', () => {
+    const first = mergeSync(empty, { accounts: [account], transactions: [tx('p1', { externalId: 'x1', amount: -10 })] });
+    const fixed = mergeSync(first, { accounts: [account], transactions: [tx('p1-new', { externalId: 'x1', amount: -12, date: '2026-10-02' })] });
+    expect(fixed).toMatchObject({ added: 0, updated: 1 });
+    expect(fixed.transactions).toEqual([expect.objectContaining({ id: 'p1', amount: -12, date: '2026-10-02' })]);
+  });
+
+  it('keeps genuine same-day repeats from one CSV file and dedupes them on re-import', async () => {
+    const csv = 'date,description,amount\n2026-10-01,Coffee,-3\n2026-10-01,Coffee,-3\n2026-10-01,Coffee,-3';
+    const read = async (text: string) => {
+      const p = new CsvImportProvider(text, { mapping: { date: 'date', description: 'description', amount: 'amount' }, accountId: 'a1' });
+      return { accounts: await p.listAccounts(), transactions: await p.fetchTransactions() };
+    };
+    const once = mergeSync({ accounts: [account], transactions: [] }, await read(csv));
+    expect(once.added).toBe(3);
+    // A later export that overlaps adds only the fourth coffee.
+    const again = mergeSync(once, await read(`${csv}\n2026-10-01,Coffee,-3`));
+    expect(again).toMatchObject({ added: 1, updated: 0 });
+    expect(again.transactions).toHaveLength(4);
+  });
+});
