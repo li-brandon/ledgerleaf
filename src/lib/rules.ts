@@ -203,3 +203,103 @@ export function normalizeRule(v: unknown, categoryIds: ReadonlySet<string>): Rul
   }
   return out;
 }
+
+/** The rule editor's fields, as typed. Amounts are signed text (negative = money out). */
+export interface RuleDraft {
+  descriptionOp: 'any' | 'contains' | 'regex';
+  description: string;
+  merchantOp: 'any' | 'is' | 'contains' | 'regex';
+  merchant: string;
+  /** `range` uses `amount` as the minimum and `amountMax` as the maximum; either may be blank. */
+  amountOp: 'any' | 'equals' | 'range';
+  amount: string;
+  amountMax: string;
+  /** Empty for any account. */
+  accountId: string;
+  categoryId: string;
+  /** Empty to keep the merchant as it is. */
+  renameMerchant: string;
+}
+
+export const emptyRuleDraft = (categoryId = ''): RuleDraft => ({
+  descriptionOp: 'contains', description: '', merchantOp: 'any', merchant: '',
+  amountOp: 'any', amount: '', amountMax: '', accountId: '', categoryId, renameMerchant: '',
+});
+
+const numText = (n: number | undefined) => (n === undefined ? '' : String(n));
+
+/** The editor fields for an existing rule. */
+export function ruleToDraft(rule: Rule): RuleDraft {
+  const d = emptyRuleDraft(rule.categoryId);
+  if (rule.descriptionRegex !== undefined) Object.assign(d, { descriptionOp: 'regex', description: rule.descriptionRegex });
+  else if (rule.descriptionContains !== undefined) Object.assign(d, { descriptionOp: 'contains', description: rule.descriptionContains });
+  else d.descriptionOp = 'any';
+  if (rule.merchantRegex !== undefined) Object.assign(d, { merchantOp: 'regex', merchant: rule.merchantRegex });
+  else if (rule.merchantContains !== undefined) Object.assign(d, { merchantOp: 'contains', merchant: rule.merchantContains });
+  else if (rule.merchant !== undefined) Object.assign(d, { merchantOp: 'is', merchant: rule.merchant });
+  if (rule.amountEquals !== undefined) Object.assign(d, { amountOp: 'equals', amount: numText(rule.amountEquals) });
+  else if (rule.amountMin !== undefined || rule.amountMax !== undefined) {
+    Object.assign(d, { amountOp: 'range', amount: numText(rule.amountMin), amountMax: numText(rule.amountMax) });
+  }
+  d.accountId = rule.accountId ?? '';
+  d.renameMerchant = rule.renameMerchant ?? '';
+  return d;
+}
+
+const parseAmount = (s: string) => (s.trim() === '' ? undefined : Number(s.replace(/[$,\s]/g, '')));
+
+/**
+ * The rule the editor describes (keeping `id`), or why it cannot be saved. Runs
+ * {@link validateRule} too.
+ */
+export function draftToRule(
+  draft: RuleDraft, id: string, categories: readonly Category[],
+): { rule: Rule; error?: undefined } | { error: string; rule?: undefined } {
+  const rule: Rule = { id, categoryId: draft.categoryId };
+  if (draft.descriptionOp !== 'any') {
+    if (!draft.description.trim()) return { error: 'Enter the description text to match, or choose “any description”.' };
+    rule[draft.descriptionOp === 'regex' ? 'descriptionRegex' : 'descriptionContains'] = draft.description.trim();
+  }
+  if (draft.merchantOp !== 'any') {
+    if (!draft.merchant.trim()) return { error: 'Enter the merchant text to match, or choose “any merchant”.' };
+    const key = ({ is: 'merchant', contains: 'merchantContains', regex: 'merchantRegex' } as const)[draft.merchantOp];
+    rule[key] = draft.merchant.trim();
+  }
+  if (draft.amountOp === 'equals') {
+    rule.amountEquals = parseAmount(draft.amount);
+    if (rule.amountEquals === undefined) return { error: 'Enter the amount to match.' };
+  } else if (draft.amountOp === 'range') {
+    rule.amountMin = parseAmount(draft.amount);
+    rule.amountMax = parseAmount(draft.amountMax);
+    if (rule.amountMin === undefined && rule.amountMax === undefined) return { error: 'Enter a minimum or maximum amount.' };
+    if (rule.amountMin === undefined) delete rule.amountMin;
+    if (rule.amountMax === undefined) delete rule.amountMax;
+  }
+  if (draft.accountId) rule.accountId = draft.accountId;
+  if (draft.renameMerchant.trim()) rule.renameMerchant = draft.renameMerchant.trim();
+  const error = validateRule(rule, categories);
+  return error ? { error } : { rule };
+}
+
+const money = (n: number) => `${n < 0 ? '−' : ''}$${Math.abs(n).toFixed(2).replace(/\.00$/, '')}`;
+
+/** The conditions of a rule in words, e.g. ['description contains “amzn”', 'amount is −$10']. */
+export function describeConditions(rule: Rule, accountName: (id: string) => string = (id) => id): string[] {
+  const out: string[] = [];
+  if (rule.descriptionContains !== undefined) out.push(`description contains “${rule.descriptionContains}”`);
+  if (rule.descriptionRegex !== undefined) out.push(`description matches /${rule.descriptionRegex}/`);
+  if (rule.merchant !== undefined) out.push(`merchant is “${rule.merchant}”`);
+  if (rule.merchantContains !== undefined) out.push(`merchant contains “${rule.merchantContains}”`);
+  if (rule.merchantRegex !== undefined) out.push(`merchant matches /${rule.merchantRegex}/`);
+  if (rule.amountEquals !== undefined) out.push(`amount is ${money(rule.amountEquals)}`);
+  const { amountMin: lo, amountMax: hi } = rule;
+  if (lo !== undefined && hi !== undefined) out.push(`amount between ${money(lo)} and ${money(hi)}`);
+  else if (lo !== undefined) out.push(`amount at least ${money(lo)}`);
+  else if (hi !== undefined) out.push(`amount at most ${money(hi)}`);
+  if (rule.accountId !== undefined) out.push(`account is ${accountName(rule.accountId)}`);
+  return out;
+}
+
+/** How many of `transactions` the rule matches (whether or not it would win). */
+export const countMatches = (rule: Rule, transactions: readonly Transaction[]) =>
+  transactions.reduce((n, t) => (ruleMatches(rule, t) ? n + 1 : n), 0);
