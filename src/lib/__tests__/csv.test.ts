@@ -8,6 +8,12 @@ describe('parseCsvRows', () => {
       ['1', '2', '3'],
     ]);
   });
+  it('strips a byte order mark and keeps newlines inside quotes', () => {
+    expect(parseCsvRows('\uFEFFDate,Memo\n2026-01-01,"line one\nline two"\n')).toEqual([
+      ['Date', 'Memo'],
+      ['2026-01-01', 'line one\nline two'],
+    ]);
+  });
 });
 
 describe('field parsers', () => {
@@ -17,12 +23,39 @@ describe('field parsers', () => {
     expect(normalizeDate('2026-02-30')).toBeNull();
     expect(normalizeDate('yesterday')).toBeNull();
   });
+  it.each([
+    ['2026-10-03', '2026-10-03'],
+    ['2026/10/03', '2026-10-03'],
+    ['2026-10-03T14:20:00Z', '2026-10-03'],
+    ['10/03/2026', '2026-10-03'],
+    ['1/5/26', '2026-01-05'],
+    ['12/31/99', '1999-12-31'],
+    ['1-5-2026', '2026-01-05'],
+    ['03 Oct 2026', '2026-10-03'],
+    ['3 October 2026', '2026-10-03'],
+    ['03-Sept-26', '2026-09-03'],
+    ['Oct 3, 2026', '2026-10-03'],
+  ])('reads %s', (raw, iso) => expect(normalizeDate(raw)).toBe(iso));
+  it.each(['31 Foo 2026', '13/01/2026', '2/29/2025', '', '3 Ma 2026'])('rejects %j', (raw) =>
+    expect(normalizeDate(raw)).toBeNull());
   it('parses amounts', () => {
     expect(parseAmount('$1,234.50')).toBe(1234.5);
     expect(parseAmount('(45.00)')).toBe(-45);
     expect(parseAmount('-12')).toBe(-12);
     expect(parseAmount('abc')).toBeNull();
   });
+  it.each([
+    ['-$1,234.56', -1234.56],
+    ['$-12.00', -12],
+    ['($1,000.00)', -1000],
+    ['€ 9.99', 9.99],
+    ['£1,000', 1000],
+    ['12.50 USD', 12.5],
+    ['1,234.56-', -1234.56],
+    ['+3', 3],
+    ['.5', 0.5],
+  ])('parses %s', (raw, n) => expect(parseAmount(raw)).toBe(n));
+  it.each(['', '$', '()', '1.2.3', '12abc'])('rejects %j', (raw) => expect(parseAmount(raw)).toBeNull());
 });
 
 describe('parseTransactionsCsv', () => {
