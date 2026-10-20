@@ -3,7 +3,7 @@ import {
   createPersister, demoCounts, loadLedger, openRepository, withoutDemo, type Persister, type Repository,
 } from './db';
 import { renameAccount, setAccountHidden } from './lib/accounts';
-import { currentMonth, upsertBudget } from './lib/budget';
+import { currentMonth, setMonthBudget } from './lib/budget';
 import {
   addCategory as addCat, deleteCategory as deleteCat, ensureCategory, updateCategory as updateCat, type CategoryDraft,
 } from './lib/categories';
@@ -140,11 +140,20 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
 
   const editTx = useCallback((id: string, edit: TxEdit) => setState((s) => editTransaction(s, id, edit)), []);
 
-  const setBudget = useCallback((category: string, amount: number) =>
+  /** Set a category's budget (by name) for `month` and the months after it that have none of their own. */
+  const setBudget = useCallback((category: string, amount: number, month = currentMonth()) =>
     setState((s) => {
       const categories = [...s.categories];
       const cat = ensureCategory(categories, category);
-      return { ...s, categories, budgets: upsertBudget(s.budgets, cat.id, currentMonth(), Math.max(0, amount || 0)) };
+      return { ...s, categories, budgets: setMonthBudget(s.budgets, cat.id, month, { amount: Math.max(0, amount || 0) }) };
+    }), []);
+
+  /** Turn rollover on or off for a category (by name) from `month` on. */
+  const setRollover = useCallback((category: string, rollover: boolean, month = currentMonth()) =>
+    setState((s) => {
+      const categories = [...s.categories];
+      const cat = ensureCategory(categories, category);
+      return { ...s, categories, budgets: setMonthBudget(s.budgets, cat.id, month, { rollover }) };
     }), []);
 
   const renameAcct = useCallback((id: string, name: string) =>
@@ -199,7 +208,7 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
   const reset = useCallback(() => setState(emptyLedger()), []);
 
   return {
-    state, loading, error, runSync, clearDemo, setCategory, setAlways, setReviewed, editTransaction: editTx, setBudget, renameAccount: renameAcct,
+    state, loading, error, runSync, clearDemo, setCategory, setAlways, setReviewed, editTransaction: editTx, setBudget, setRollover, renameAccount: renameAcct,
     setAccountHidden: setHidden, addCategory, updateCategory, deleteCategory, saveRule, deleteRule, moveRule, applyRules,
     reset,
   };
