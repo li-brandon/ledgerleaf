@@ -106,11 +106,14 @@ export function LineChart({ points, label, W = 440 }: { points: { label: string;
 }
 
 /** Horizontal progress meter; `ratio` may exceed 1. */
-export function Meter({ ratio, status }: { ratio: number; status?: 'ok' | 'near' | 'over' }) {
+/** Progress bar; `mark` (0..1) draws a tick, e.g. where spending should be by today. */
+export function Meter({ ratio, status, mark, label }: { ratio: number; status?: 'ok' | 'near' | 'over'; mark?: number; label?: string }) {
   const pct = Math.min(100, Math.max(0, (Number.isFinite(ratio) ? ratio : 1) * 100));
+  const showMark = mark !== undefined && mark > 0 && mark < 1;
   return (
-    <div className={`meter ${status ?? 'ok'}`} role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)}>
+    <div className={`meter ${status ?? 'ok'}`} role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)}>
       <span style={{ width: `${pct}%` }} />
+      {showMark && <i style={{ left: `${mark * 100}%` }} aria-hidden />}
     </div>
   );
 }
