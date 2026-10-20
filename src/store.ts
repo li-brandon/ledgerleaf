@@ -7,6 +7,10 @@ import { currentMonth, upsertBudget } from './lib/budget';
 import { ensureCategory } from './lib/categories';
 import { emptyLedger } from './lib/migrate';
 import { SyncError, applySync, fetchSync, type SyncProvider } from './lib/sync';
+import {
+  addMerchantRule, editTransaction, removeMerchantRule, setCategory as setTxCategory, setReviewed as setTxReviewed,
+  type TxEdit,
+} from './lib/txEdits';
 import type { LedgerState } from './lib/types';
 
 export type { LedgerState };
@@ -112,16 +116,26 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
     return removed;
   }, []);
 
-  const setCategory = useCallback((id: string, category: string) =>
+  /** Set the category of one or more transactions; `always` also makes it the rule for the first one's merchant. */
+  const setCategory = useCallback((ids: string | string[], category: string, opts: { always?: boolean } = {}) =>
     setState((s) => {
-      const categories = [...s.categories];
-      const cat = ensureCategory(categories, category);
-      const transactions = s.transactions.map((t) => (t.id === id ? { ...t, category: cat.name, categoryId: cat.id } : t));
-      return { ...s, categories, transactions };
+      const list = typeof ids === 'string' ? [ids] : ids;
+      const next = setTxCategory(s, list, category);
+      return opts.always && list.length ? addMerchantRule(next, list[0], category) : next;
     }), []);
 
-  const setReviewed = useCallback((id: string, reviewed: boolean) =>
-    setState((s) => ({ ...s, transactions: s.transactions.map((t) => (t.id === id ? { ...t, reviewed } : t)) })), []);
+  /** Turn "always categorize like this" on (with the transaction's current category) or off for its merchant. */
+  const setAlways = useCallback((id: string, on: boolean) =>
+    setState((s) => {
+      const t = s.transactions.find((x) => x.id === id);
+      if (!t) return s;
+      return on ? addMerchantRule(s, id, t.category) : removeMerchantRule(s, id);
+    }), []);
+
+  const setReviewed = useCallback((ids: string | string[], reviewed: boolean) =>
+    setState((s) => setTxReviewed(s, typeof ids === 'string' ? [ids] : ids, reviewed)), []);
+
+  const editTx = useCallback((id: string, edit: TxEdit) => setState((s) => editTransaction(s, id, edit)), []);
 
   const setBudget = useCallback((category: string, amount: number) =>
     setState((s) => {
@@ -145,7 +159,7 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
   const reset = useCallback(() => setState(emptyLedger()), []);
 
   return {
-    state, loading, error, runSync, clearDemo, setCategory, setReviewed, setBudget, renameAccount: renameAcct,
+    state, loading, error, runSync, clearDemo, setCategory, setAlways, setReviewed, editTransaction: editTx, setBudget, renameAccount: renameAcct,
     setAccountHidden: setHidden, reset,
   };
 }
