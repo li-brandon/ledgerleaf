@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import { MockProvider } from '../lib/sync';
 import type { Ledger } from '../store';
 
 export default function EmptyState({ ledger }: { ledger: Ledger }) {
+  const [error, setError] = useState('');
+  const loadDemo = () => ledger.runSync(new MockProvider()).catch((e: Error) => setError(e.message));
   return (
     <div className="card empty">
       <svg className="empty-art" viewBox="0 0 64 64" width="56" height="56" aria-hidden>
@@ -10,8 +13,9 @@ export default function EmptyState({ ledger }: { ledger: Ledger }) {
       </svg>
       <h2>Your ledger is blank</h2>
       <p className="muted">Load the demo bank to explore, or import a CSV export from your bank. Nothing leaves this browser.</p>
+      {error && <p className="notice error" role="alert">{error}</p>}
       <div className="row">
-        <button onClick={() => ledger.runSync(new MockProvider())}>Load demo data</button>
+        <button onClick={loadDemo}>Load demo data</button>
         <a className="btn ghost" href="#/connections">Import CSV</a>
       </div>
     </div>

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPersister, loadLedger, openRepository, type Persister, type Repository } from './db';
 import { currentMonth, upsertBudget } from './lib/budget';
 import { ensureCategory } from './lib/categories';
-import { emptyLedger, normalizeLedger } from './lib/migrate';
-import { mergeSync, type SyncProvider } from './lib/sync';
+import { emptyLedger } from './lib/migrate';
+import { SyncError, applySync, fetchSync, type SyncProvider } from './lib/sync';
 import type { LedgerState } from './lib/types';
 
 export type { LedgerState };
@@ -59,14 +59,29 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
     persister.current?.schedule(state);
   }, [state]);
 
+  /**
+   * Sync one provider, all or nothing: everything is fetched and validated, merged, and
+   * written to storage before the ledger updates. Any failure throws a {@link SyncError}
+   * and leaves both the stored and in-memory ledger untouched.
+   */
   const runSync = useCallback(async (provider: SyncProvider) => {
-    const incoming = await provider.sync();
-    const tagged = incoming.transactions.map((t) => ({ ...t, source: t.source ?? provider.id }));
-    const { added, accounts, transactions } = mergeSync(latest.current, { ...incoming, transactions: tagged });
-    const next = normalizeLedger({ ...latest.current, accounts, transactions, lastSync: new Date().toISOString() });
-    latest.current = next;
-    setState(next);
-    return { added, received: incoming.transactions.length };
+    const incoming = await fetchSync(provider, latest.current);
+    const now = new Date();
+    const prev = latest.current;
+    const outcome = applySync(prev, provider.id, incoming, now);
+    try {
+      await persister.current?.commit(outcome.state);
+    } catch (e) {
+      // The commit replaced any queued save; queue the current ledger again.
+      persister.current?.schedule(latest.current);
+      throw new SyncError(provider.id, `${provider.name} could not be saved; nothing was imported.`, { cause: e });
+    }
+    // Edits made while the sync was being written are kept by merging into them instead.
+    const merge = (s: LedgerState) => (s === prev ? outcome.state : applySync(s, provider.id, incoming, now).state);
+    latest.current = merge(latest.current);
+    setState(merge);
+    const { added, updated, received } = outcome;
+    return { added, updated, received };
   }, []);
 
   const setCategory = useCallback((id: string, category: string) =>

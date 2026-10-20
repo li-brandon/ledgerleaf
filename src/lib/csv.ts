@@ -89,8 +89,10 @@ export function parseTransactionsCsv(text: string): CsvParseResult {
     const key = [date, description.toLowerCase(), amount.toFixed(2), accountId].join('|');
     const n = occurrences.get(key) ?? 0;
     occurrences.set(key, n + 1);
+    const externalId = hashId(`${key}#${n}`);
     transactions.push({
-      id: `csv-${hashId(`${key}#${n}`)}`,
+      id: `csv-${externalId}`,
+      externalId,
       date, description, amount,
       category: get('category') || 'Other',
       accountId,
