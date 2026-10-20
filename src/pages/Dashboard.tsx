@@ -8,6 +8,7 @@ import {
   NET_WORTH_RANGES, UPCOMING_DAYS, cashFlow, daysInMonth, incomeCategories, netWorthTrend, reviewQueue, spendPace,
   trendChange, upcomingRecurring, type NetWorthRange,
 } from '../lib/overview';
+import { recurringCharges, recurringSeries } from '../lib/recurring';
 import { routeHref } from '../lib/routes';
 import { EMPTY_FILTERS, filtersHref } from '../lib/txFilters';
 import type { Ledger } from '../store';
@@ -17,7 +18,7 @@ const signed = (n: number) => `${n > 0 ? '+' : ''}${fmtMoney(n)}`;
 
 export default function Dashboard({ ledger }: { ledger: Ledger }) {
   const [range, setRange] = useState<NetWorthRange>(6);
-  const { accounts, transactions, budgets, categories, balanceSnapshots } = ledger.state;
+  const { accounts, transactions, budgets, categories, balanceSnapshots, recurring } = ledger.state;
   if (!transactions.length && !accounts.length) return <><h1>Overview</h1><EmptyState ledger={ledger} /></>;
 
   const today = new Date();
@@ -32,7 +33,7 @@ export default function Dashboard({ ledger }: { ledger: Ledger }) {
   const trend = netWorthTrend(accounts, balanceSnapshots, month, range);
   const change = trendChange(trend);
   const worth = netWorth(accounts, transactions).netWorth;
-  const upcoming = upcomingRecurring([], today);
+  const upcoming = upcomingRecurring(recurringCharges(recurringSeries({ transactions, recurring }, today, excluded)), today);
   const review = reviewQueue(transactions);
   const months = monthlySpend(transactions, monthRange(month, 4), excluded);
   const accountName = Object.fromEntries(accounts.map((a) => [a.id, a.name]));
@@ -129,7 +130,7 @@ export default function Dashboard({ ledger }: { ledger: Ledger }) {
       </div>
       <div className="grid two">
         <section className="card" aria-label="Upcoming recurring">
-          <h3>Upcoming · next {UPCOMING_DAYS} days <a href={routeHref('transactions')} className="more">Transactions →</a></h3>
+          <h3>Upcoming · next {UPCOMING_DAYS} days <a href={routeHref('recurring')} className="more">Recurring →</a></h3>
           {upcoming.length ? (
             <ul className="ruled">
               {upcoming.map((c) => (
@@ -141,7 +142,8 @@ export default function Dashboard({ ledger }: { ledger: Ledger }) {
             </ul>
           ) : (
             <p className="muted">
-              Recurring bills and subscriptions will show here once they are detected from your transactions.
+              Nothing due in the next {UPCOMING_DAYS} days. Recurring bills and subscriptions show here once they are
+              detected from your transactions or <a href={routeHref('recurring')}>added by hand</a>.
             </p>
           )}
         </section>

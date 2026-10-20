@@ -127,7 +127,7 @@ export function netWorthTrend(
 export const trendChange = (points: readonly { total: number }[]) =>
   points.length > 1 ? round(points[points.length - 1].total - points[0].total) : 0;
 
-/** A charge expected to repeat, as recurring detection will report it. */
+/** A charge expected to repeat, as reported by recurring detection (see `recurringCharges`). */
 export interface RecurringCharge {
   name: string;
   /** Signed, same convention as Transaction.amount. */
