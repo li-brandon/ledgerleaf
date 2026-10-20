@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { emptyLedger } from '../migrate';
 import {
   CsvImportProvider, MockProvider, ProviderRegistry, SyncError, applySync, fetchSync, hashId, mergeSync, providers,
+  syncBalances,
   type SyncProvider, type SyncResult,
 } from '../sync';
 import type { Account, LedgerState, Transaction } from '../types';
@@ -212,6 +213,43 @@ describe('applySync', () => {
     const later = new Date(2026, 9, 21);
     const next = await syncOnce(state, fixedProvider({ accounts: [], transactions: [] }, { id: 'other' }), later);
     expect(next.state.syncs).toEqual({ bank: { lastSync: now.toISOString() }, other: { lastSync: later.toISOString() } });
+  });
+
+  it('snapshots the derived balance of every account a CSV import touches', async () => {
+    const csv = 'date,description,amount,category,account\n2026-10-01,Pay,1000,Income,Main\n2026-10-02,Tea,-3.5,Dining,Main';
+    const { state } = await syncOnce(emptyLedger('2026-10'), new CsvImportProvider(csv));
+    const [main] = state.accounts;
+    expect(state.balanceSnapshots).toEqual([{ accountId: main.id, date: '2026-10-20', balance: 996.5, source: 'csv' }]);
+
+    // Importing again the next day adds a snapshot for that day; re-importing the same day updates it.
+    const later = new Date(2026, 9, 21);
+    const more = 'date,description,amount,category,account\n2026-10-21,Cake,-6.5,Dining,Main';
+    const next = await syncOnce(state, new CsvImportProvider(more), later);
+    expect(next.state.balanceSnapshots.map((s) => [s.date, s.balance])).toEqual([['2026-10-20', 996.5], ['2026-10-21', 990]]);
+    const same = await syncOnce(next.state, new CsvImportProvider(more), later);
+    expect(same.state.balanceSnapshots).toEqual(next.state.balanceSnapshots);
+  });
+
+  it('records reported balances as they are and only derives the rest', async () => {
+    const card: Account = { id: 'c1', name: 'Card', type: 'credit' };
+    const kept: Account = { id: 'k1', name: 'Untouched', type: 'savings' };
+    const p = fixedProvider({
+      accounts: [account, card], transactions: [tx('t1', { accountId: 'c1', amount: -40 })],
+      balances: [{ accountId: 'a1', balance: 50 }, { accountId: 'c1', balance: -30, date: '2026-10-01' }],
+    });
+    const { state } = await syncOnce({ ...emptyLedger('2026-10'), accounts: [kept] }, p);
+    expect(state.balanceSnapshots).toEqual([
+      { accountId: 'a1', date: '2026-10-20', balance: 50, source: 'bank' },
+      { accountId: 'c1', date: '2026-10-01', balance: -30, source: 'bank' },
+    ]);
+  });
+
+  it('derives a snapshot for an account with no balance reported today', () => {
+    const balances = syncBalances(
+      { accounts: [account], transactions: [tx('t1', { amount: -5 })], balances: [] },
+      [account, { id: 'x', name: 'X', type: 'loan' }], [tx('t1', { amount: -5 })], '2026-10-20',
+    );
+    expect(balances).toEqual([{ accountId: 'a1', balance: -5, date: '2026-10-20' }]);
   });
 
   it('stamps the provider id as source and asks only for what is new', async () => {
