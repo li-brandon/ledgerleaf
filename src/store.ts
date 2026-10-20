@@ -4,14 +4,17 @@ import {
 } from './db';
 import { renameAccount, setAccountHidden } from './lib/accounts';
 import { currentMonth, upsertBudget } from './lib/budget';
-import { ensureCategory } from './lib/categories';
+import {
+  addCategory as addCat, deleteCategory as deleteCat, ensureCategory, updateCategory as updateCat, type CategoryDraft,
+} from './lib/categories';
 import { emptyLedger } from './lib/migrate';
+import { applyRulesToLedger, moveRule as moveRuleIn, removeRule, upsertRule, type ApplyOptions } from './lib/rules';
 import { SyncError, applySync, fetchSync, type SyncProvider } from './lib/sync';
 import {
   addMerchantRule, editTransaction, removeMerchantRule, setCategory as setTxCategory, setReviewed as setTxReviewed,
   type TxEdit,
 } from './lib/txEdits';
-import type { LedgerState } from './lib/types';
+import type { LedgerState, Rule } from './lib/types';
 
 export type { LedgerState };
 
@@ -156,11 +159,49 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
       return accounts === s.accounts ? s : { ...s, accounts };
     }), []);
 
+  /**
+   * Apply a change that may throw (e.g. a duplicate category name). It is checked against
+   * the latest ledger first; resolves to the error message, or undefined once applied.
+   */
+  const attempt = useCallback((fn: (s: LedgerState) => LedgerState): string | undefined => {
+    try {
+      fn(latest.current);
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+    setState((s) => {
+      try {
+        return fn(s);
+      } catch {
+        return s;
+      }
+    });
+    return undefined;
+  }, []);
+
+  const addCategory = useCallback((draft: CategoryDraft) => attempt((s) => addCat(s, draft)), [attempt]);
+  const updateCategory = useCallback((id: string, draft: CategoryDraft) => attempt((s) => updateCat(s, id, draft)), [attempt]);
+  /** Delete a category, moving anything that uses it to `reassignTo`. */
+  const deleteCategory = useCallback((id: string, reassignTo?: string) => attempt((s) => deleteCat(s, id, reassignTo)), [attempt]);
+
+  /** Add a rule (lowest priority) or replace the one with its id. */
+  const saveRule = useCallback((rule: Rule) => setState((s) => ({ ...s, rules: upsertRule(s.rules, rule) })), []);
+  const deleteRule = useCallback((id: string) => setState((s) => ({ ...s, rules: removeRule(s.rules, id) })), []);
+  /** Move a rule up (`by < 0`, higher priority) or down. */
+  const moveRule = useCallback((id: string, by: number) =>
+    setState((s) => {
+      const rules = moveRuleIn(s.rules, id, by);
+      return rules === s.rules ? s : { ...s, rules };
+    }), []);
+  /** Apply every rule to existing transactions, leaving fields the user edited alone. */
+  const applyRules = useCallback((opts: ApplyOptions = {}) => setState((s) => applyRulesToLedger(s, opts)), []);
+
   const reset = useCallback(() => setState(emptyLedger()), []);
 
   return {
     state, loading, error, runSync, clearDemo, setCategory, setAlways, setReviewed, editTransaction: editTx, setBudget, renameAccount: renameAcct,
-    setAccountHidden: setHidden, reset,
+    setAccountHidden: setHidden, addCategory, updateCategory, deleteCategory, saveRule, deleteRule, moveRule, applyRules,
+    reset,
   };
 }
 
