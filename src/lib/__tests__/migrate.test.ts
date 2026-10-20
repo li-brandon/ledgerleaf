@@ -101,6 +101,53 @@ describe('migrate', () => {
     expect(migrate(v1, MONTH).importMappings).toBeUndefined();
   });
 
+  it('fills fields missing from stored categories and keeps the exclude flag the user set', () => {
+    const base = migrate(v1, MONTH);
+    const s = migrate({
+      ...base,
+      categories: [
+        { id: 'income', name: 'Income' },
+        { id: 'dining', name: 'Dining', group: 'Lifestyle', color: '#d9822b', icon: '🍽️', excludeFromSpend: true },
+        { id: 'dining', name: 'Duplicate' },
+        { name: 'No id' },
+      ],
+    } as never, MONTH);
+    expect(s.categories.slice(0, 2)).toEqual([
+      { id: 'income', name: 'Income', group: 'Custom', color: '#a0a4ab', icon: '•', excludeFromSpend: true },
+      { id: 'dining', name: 'Dining', group: 'Lifestyle', color: '#d9822b', icon: '🍽️', excludeFromSpend: true },
+    ]);
+    expect(s.categories.filter((c) => c.id === 'dining')).toHaveLength(1);
+  });
+
+  it('keeps well-formed rules in order and drops broken ones', () => {
+    const base = migrate(v1, MONTH);
+    const s = migrate({
+      ...base,
+      rules: [
+        { id: 'b', categoryId: 'dining', merchantRegex: '^cafe', amountEquals: -5, renameMerchant: 'Cafe', junk: true },
+        { id: 'a', categoryId: 'deleted-category', merchant: 'x' },
+        { categoryId: 'dining', merchant: 'no id' },
+        { id: 'c', categoryId: 'rent', descriptionContains: 'landlord', amountMin: 'big' },
+      ],
+    } as never, MONTH);
+    expect(s.rules).toEqual([
+      { id: 'b', categoryId: 'dining', merchantRegex: '^cafe', amountEquals: -5, renameMerchant: 'Cafe' },
+      { id: 'c', categoryId: 'rent', descriptionContains: 'landlord' },
+    ]);
+  });
+
+  it('keeps edit flags only when they are set', () => {
+    const base = migrate(v1, MONTH);
+    const [a, b] = base.transactions;
+    const s = migrate({
+      ...base,
+      transactions: [{ ...a, categoryEdited: true, merchantEdited: false }, { ...b, categoryEdited: 'yes' }],
+    } as never, MONTH);
+    expect(s.transactions[0]).toMatchObject({ categoryEdited: true });
+    expect(s.transactions[0]).not.toHaveProperty('merchantEdited');
+    expect(s.transactions[1]).not.toHaveProperty('categoryEdited');
+  });
+
   it('does not mutate its input', () => {
     const copy = JSON.parse(JSON.stringify(v1));
     migrate(v1, MONTH);
