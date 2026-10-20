@@ -25,7 +25,22 @@ const ALIASES = new Map<string, RouteId>([
 
 export const isRouteId = (s: string): s is RouteId => IDS.has(s);
 
-export const routeHref = (id: RouteId) => `#/${id}`;
+/** Query parameters carried in the hash, e.g. `#/transactions?account=abc`. */
+export type RouteParams = Record<string, string>;
+
+export interface Route {
+  id: RouteId;
+  params: RouteParams;
+}
+
+/** The hash for a route; empty parameters are left out. */
+export function routeHref(id: RouteId, params: RouteParams = {}): string {
+  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== '')).toString();
+  return `#/${id}${qs ? `?${qs}` : ''}`;
+}
+
+/** Transactions, filtered to one account when `accountId` is given. */
+export const transactionsHref = (accountId?: string) => routeHref('transactions', accountId ? { account: accountId } : {});
 
 export const routeLabel = (id: RouteId) => ROUTES.find((r) => r.id === id)!.label;
 
@@ -35,13 +50,26 @@ export const routeLabel = (id: RouteId) => ROUTES.find((r) => r.id === id)!.labe
  * the default route.
  */
 export function parseHash(hash: string): RouteId {
+  return parseRoute(hash).id;
+}
+
+/**
+ * Resolve a `location.hash` value to a route and its query parameters. Parameters are
+ * dropped when the hash falls back to the default route.
+ */
+export function parseRoute(hash: string): Route {
   const slug = hash.replace(/^#/, '').replace(/^\/+/, '').split(/[/?#]/)[0].trim().toLowerCase();
-  if (isRouteId(slug)) return slug;
-  return ALIASES.get(slug) ?? DEFAULT_ROUTE;
+  const id = isRouteId(slug) ? slug : ALIASES.get(slug);
+  if (!id) return { id: DEFAULT_ROUTE, params: {} };
+  const q = hash.indexOf('?');
+  const query = q < 0 ? [] : [...new URLSearchParams(hash.slice(q + 1).split('#')[0])];
+  // fromEntries defines own properties, so keys like `__proto__` stay plain data.
+  return { id, params: Object.fromEntries(query.filter(([, v]) => v !== '')) };
 }
 
 /** The hash the address bar should show for a given hash, or null if it is already canonical. */
 export function canonicalHash(hash: string): string | null {
-  const want = routeHref(parseHash(hash));
+  const { id, params } = parseRoute(hash);
+  const want = routeHref(id, params);
   return hash === want ? null : want;
 }
