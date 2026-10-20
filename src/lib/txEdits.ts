@@ -34,19 +34,26 @@ function mapTransactions(
 }
 
 /**
- * Edit merchant, notes or reviewed on one transaction. A blank merchant falls back to the
- * description; blank notes are removed. Returns `state` itself when nothing changes.
+ * Edit merchant, notes or reviewed on one transaction. A renamed merchant is marked as the
+ * user's, so rules leave it alone; a blank merchant falls back to the description and lets
+ * rules rename it again. Blank notes are removed. Returns `state` itself when nothing changes.
  */
 export function editTransaction(state: LedgerState, id: string, edit: TxEdit): LedgerState {
   return mapTransactions(state, [id], (t) => {
     const next: Transaction = { ...t };
-    if (edit.merchant !== undefined) next.merchant = edit.merchant.trim() || t.description;
+    if (edit.merchant !== undefined && (edit.merchant.trim() || t.description) !== t.merchant) {
+      // A blank merchant hands the name back to the provider description (and to rules).
+      next.merchant = edit.merchant.trim() || t.description;
+      if (edit.merchant.trim()) next.merchantEdited = true;
+      else delete next.merchantEdited;
+    }
     if (edit.notes !== undefined) {
       if (edit.notes.trim()) next.notes = edit.notes;
       else delete next.notes;
     }
     if (edit.reviewed !== undefined) next.reviewed = edit.reviewed;
-    const same = next.merchant === t.merchant && next.notes === t.notes && next.reviewed === t.reviewed;
+    const same = next.merchant === t.merchant && next.notes === t.notes && next.reviewed === t.reviewed
+      && next.merchantEdited === t.merchantEdited;
     return same ? t : next;
   });
 }
@@ -57,13 +64,16 @@ export const setReviewed = (state: LedgerState, ids: Iterable<string>, reviewed:
 
 /**
  * Set the category of every transaction in `ids` by name, creating a custom category for
- * an unknown name.
+ * an unknown name. `byUser` (the default) marks the category as the user's choice, which
+ * rules never override; rules themselves pass false.
  */
-export function setCategory(state: LedgerState, ids: Iterable<string>, name: string): LedgerState {
+export function setCategory(state: LedgerState, ids: Iterable<string>, name: string, byUser = true): LedgerState {
   const categories = [...state.categories];
   const cat = ensureCategory(categories, name);
-  const next = mapTransactions(state, ids, (t) =>
-    (t.categoryId === cat.id && t.category === cat.name ? t : { ...t, category: cat.name, categoryId: cat.id }));
+  const next = mapTransactions(state, ids, (t) => {
+    if (t.categoryId === cat.id && t.category === cat.name) return t;
+    return byUser ? { ...t, category: cat.name, categoryId: cat.id, categoryEdited: true } : { ...t, category: cat.name, categoryId: cat.id };
+  });
   if (categories.length === state.categories.length) return next;
   return { ...next, categories };
 }
@@ -83,7 +93,8 @@ export const merchantRule = (rules: readonly Rule[], t: Transaction) =>
 /**
  * Create (or update) the rule "always categorize this merchant as `name`", taking precedence
  * over older rules, and apply it to the other transactions from the merchant that have not
- * been reviewed yet. Reviewed transactions are left as the user set them.
+ * been reviewed yet. Reviewed transactions, and categories the user picked by hand, are
+ * left as they are.
  */
 export function addMerchantRule(state: LedgerState, id: string, name: string): LedgerState {
   const t = state.transactions.find((x) => x.id === id);
@@ -95,8 +106,9 @@ export function addMerchantRule(state: LedgerState, id: string, name: string): L
   const rule: Rule = { id: existing?.id ?? `rule-${hashId(norm(merchant))}`, merchant, categoryId: cat.id };
   const rules = [rule, ...state.rules.filter((r) => r !== existing)];
   const next = { ...state, categories, rules };
-  const others = state.transactions.filter((x) => x.id !== id && !x.reviewed && ruleMatches(rule, x)).map((x) => x.id);
-  return setCategory(next, [id, ...others], cat.name);
+  const others = state.transactions
+    .filter((x) => x.id !== id && !x.reviewed && !x.categoryEdited && ruleMatches(rule, x)).map((x) => x.id);
+  return setCategory(setCategory(next, [id], cat.name), others, cat.name, false);
 }
 
 /** Remove the "always categorize like this" rule for `id`'s merchant. Categories already set are kept. */
