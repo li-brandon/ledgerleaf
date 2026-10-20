@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createPersister, demoCounts, loadLedger, openRepository, withoutDemo, type Persister, type Repository,
 } from './db';
+import { restoreBackup, type Backup, type RestoreMode } from './db/backup';
 import { renameAccount, setAccountHidden } from './lib/accounts';
 import { currentMonth, setMonthBudget } from './lib/budget';
 import {
@@ -12,6 +13,7 @@ import {
   addManualRecurring, removeManualRecurring, setRecurringDecision, type ManualDraft,
 } from './lib/recurring';
 import { applyRulesToLedger, moveRule as moveRuleIn, removeRule, upsertRule, type ApplyOptions } from './lib/rules';
+import { settingsOf, updateSettings, type Settings } from './lib/settings';
 import { SyncError, applySync, fetchSync, type SyncProvider } from './lib/sync';
 import {
   addMerchantRule, editTransaction, removeMerchantRule, setCategory as setTxCategory, setReviewed as setTxReviewed,
@@ -215,12 +217,39 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
   const addRecurring = useCallback((draft: ManualDraft) => attempt((s) => addManualRecurring(s, draft)), [attempt]);
   const removeRecurring = useCallback((id: string) => setState((s) => removeManualRecurring(s, id)), []);
 
-  const reset = useCallback(() => setState(emptyLedger()), []);
+  /** Change settings; invalid values are ignored. */
+  const setSettings = useCallback((patch: Partial<Settings>) =>
+    setState((s) => ({ ...s, settings: updateSettings(settingsOf(s), patch) })), []);
+
+  /**
+   * Replace the whole ledger with `next`, written to storage before the ledger updates.
+   * Throws `failure` and changes nothing if the write fails.
+   */
+  const replaceAll = useCallback(async (next: LedgerState, failure: string) => {
+    try {
+      await persister.current?.commit(next);
+    } catch (e) {
+      persister.current?.schedule(latest.current);
+      throw new Error(failure, { cause: e });
+    }
+    latest.current = next;
+    setState(next);
+  }, []);
+
+  /** Restore a parsed backup (see `db/backup`), replacing or merging into the ledger. Resolves to what was added. */
+  const importBackup = useCallback(async (backup: Backup, mode: RestoreMode) => {
+    const { state: next, added } = restoreBackup(latest.current, backup, mode);
+    await replaceAll(next, 'The backup could not be saved; nothing was changed.');
+    return added;
+  }, [replaceAll]);
+
+  /** Erase everything, settings included, leaving a fresh ledger. */
+  const reset = useCallback(() => replaceAll(emptyLedger(), 'Local data could not be erased; nothing was changed.'), [replaceAll]);
 
   return {
     state, loading, error, runSync, clearDemo, setCategory, setAlways, setReviewed, editTransaction: editTx, setBudget, setRollover, renameAccount: renameAcct,
     setAccountHidden: setHidden, addCategory, updateCategory, deleteCategory, saveRule, deleteRule, moveRule, applyRules,
-    setRecurring, addRecurring, removeRecurring, reset,
+    setRecurring, addRecurring, removeRecurring, setSettings, importBackup, reset,
   };
 }
 
