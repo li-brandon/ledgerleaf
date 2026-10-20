@@ -7,3 +7,5 @@ export const fmtMonth = (key: string, style: 'short' | 'long' = 'short') =>
   new Date(`${key}-01T00:00:00`).toLocaleString('en-US', { month: style, year: style === 'long' ? 'numeric' : undefined });
 export const fmtDate = (iso: string) =>
   new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+export const fmtDay = (iso: string) =>
+  new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });

@@ -120,6 +120,9 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
       return { ...s, categories, transactions };
     }), []);
 
+  const setReviewed = useCallback((id: string, reviewed: boolean) =>
+    setState((s) => ({ ...s, transactions: s.transactions.map((t) => (t.id === id ? { ...t, reviewed } : t)) })), []);
+
   const setBudget = useCallback((category: string, amount: number) =>
     setState((s) => {
       const categories = [...s.categories];
@@ -142,7 +145,7 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
   const reset = useCallback(() => setState(emptyLedger()), []);
 
   return {
-    state, loading, error, runSync, clearDemo, setCategory, setBudget, renameAccount: renameAcct,
+    state, loading, error, runSync, clearDemo, setCategory, setReviewed, setBudget, renameAccount: renameAcct,
     setAccountHidden: setHidden, reset,
   };
 }
