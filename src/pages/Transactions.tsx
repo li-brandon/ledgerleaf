@@ -1,7 +1,10 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type { PageProps } from '../App';
+import { downloadFile, rememberTxFilters } from '../browser';
 import TxDetail from '../components/TxDetail';
-import { fmtDay, fmtMoney } from '../format';
+import { csvFilename } from '../db/backup';
+import { displayCurrency, fmtDay, fmtMoney } from '../format';
+import { transactionsToCsv } from '../lib/csvExport';
 import type { RouteParams } from '../lib/routes';
 import {
   PAGE_SIZE, activeFilterCount, applyFilters, filtersHref, groupByDate, hasFilters, parseFilters, totals,
@@ -47,7 +50,9 @@ export default function Transactions({ ledger, params }: PageProps) {
   const clear = () => setForm({});
 
   const shown = useDeferredValue(filters);
+  useEffect(() => rememberTxFilters(shown), [shown]);
   const rows = useMemo(() => applyFilters(transactions, shown), [transactions, shown]);
+  const exportCsv = () => downloadFile(csvFilename(), transactionsToCsv(rows, accounts, displayCurrency()), 'text/csv');
   const sum = useMemo(() => totals(rows), [rows]);
   const shownKey = filtersHref(shown);
   const [page, setPage] = useState({ key: shownKey, limit: PAGE_SIZE });
@@ -176,6 +181,10 @@ export default function Transactions({ ledger, params }: PageProps) {
                 Filters{more > 0 && <span className="count"> · {more}</span>}
               </button>
               {hasFilters(filters) && <button type="button" className="link" onClick={clear}>Clear</button>}
+              <button type="button" className="chip" onClick={exportCsv} disabled={!rows.length}
+                title={hasFilters(shown) ? 'Download the transactions matching these filters as CSV' : 'Download all transactions as CSV'}>
+                Export CSV
+              </button>
             </div>
             <div id="tx-filter-panel" className="tx-panel" hidden={!open}>
               <label className="field">Account
