@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type ComponentType } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
 import { NavIcon } from './components/icons';
 import {
   ROUTES, canonicalHash, parseRoute, routeHref, routeLabel, type Route, type RouteId, type RouteParams,
 } from './lib/routes';
+import { reviewCount } from './lib/txEdits';
 import { useLedger, type Ledger } from './store';
 import Dashboard from './pages/Dashboard';
 import Accounts from './pages/Accounts';
@@ -49,6 +50,7 @@ export default function App() {
   const [{ id: route, params }, setRoute] = useState<Route>(currentRoute);
   const mainRef = useRef<HTMLElement>(null);
   const first = useRef(true);
+  const toReview = useMemo(() => reviewCount(ledger.state.transactions), [ledger.state.transactions]);
 
   useEffect(() => {
     const on = () => setRoute(currentRoute());
@@ -74,6 +76,12 @@ export default function App() {
             <a key={id} href={routeHref(id)} aria-current={id === route ? 'page' : undefined}>
               <NavIcon id={id} />
               <span>{label}</span>
+              {id === 'transactions' && toReview > 0 && (
+                <span className="nav-badge" title={`${toReview.toLocaleString('en-US')} to review`}>
+                  <span aria-hidden>{toReview > 99 ? '99+' : toReview}</span>
+                  <span className="sr-only">, {toReview.toLocaleString('en-US')} to review</span>
+                </span>
+              )}
             </a>
           ))}
         </nav>
