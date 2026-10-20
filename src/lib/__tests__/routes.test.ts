@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_ROUTE, ROUTES, canonicalHash, isRouteId, parseHash, parseRoute, routeHref, routeLabel, transactionsHref,
+  DEFAULT_ROUTE, ROUTES, SUBPAGES, canonicalHash, navRoute, isRouteId, parseHash, parseRoute, routeHref, routeLabel, transactionsHref,
 } from '../routes';
 
 describe('parseHash', () => {
@@ -92,5 +92,18 @@ describe('route table', () => {
     expect(routeLabel('settings')).toBe('Settings');
     expect(isRouteId('budgets')).toBe(true);
     expect(isRouteId('ledger')).toBe(false);
+  });
+});
+
+describe('subpages', () => {
+  it('routes to pages that are not in the nav, keeping their parent highlighted', () => {
+    expect(SUBPAGES.map((p) => p.id)).toEqual(['categories']);
+    expect(parseHash('#/categories')).toBe('categories');
+    expect(parseHash('#/rules')).toBe('categories');
+    expect(canonicalHash('#/rules')).toBe('#/categories');
+    expect(routeLabel('categories')).toBe('Categories & rules');
+    expect(navRoute('categories')).toBe('settings');
+    expect(navRoute('budgets')).toBe('budgets');
+    expect(ROUTES.some((r) => (r.id as string) === 'categories')).toBe(false);
   });
 });
