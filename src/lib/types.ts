@@ -127,6 +127,30 @@ export interface CsvMapping {
   negate?: boolean;
 }
 
+/** How often a recurring charge repeats. */
+export type Cadence = 'weekly' | 'monthly' | 'yearly';
+
+/** What the user decided about a detected recurring series. */
+export type RecurringDecision = 'confirmed' | 'dismissed';
+
+/** A recurring charge the user added by hand. */
+export interface ManualRecurring {
+  id: string;
+  name: string;
+  /** Signed, same convention as Transaction.amount (negative = a charge). */
+  amount: number;
+  cadence: Cadence;
+  /** YYYY-MM-DD: a date the charge is due; later due dates follow from the cadence. */
+  nextDate: string;
+}
+
+/** The user's recurring choices; detected series themselves are recomputed from transactions. */
+export interface RecurringSettings {
+  /** Decisions on detected series, keyed by series key (see `lib/recurring`). */
+  decisions: Record<string, RecurringDecision>;
+  manual: ManualRecurring[];
+}
+
 export const SCHEMA_VERSION = 2;
 
 export interface LedgerState {
@@ -143,6 +167,8 @@ export interface LedgerState {
   syncs?: Record<string, ProviderSyncState>;
   /** Column mapping last used to import a CSV into each account, keyed by account id. */
   importMappings?: Record<string, CsvMapping>;
+  /** Confirmed / dismissed detected series and manually added ones. Absent until the user makes a choice. */
+  recurring?: RecurringSettings;
 }
 
 export const CATEGORIES = [

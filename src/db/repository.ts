@@ -34,6 +34,8 @@ export interface Meta {
   lastSync?: string;
   syncs?: LedgerState['syncs'];
   importMappings?: LedgerState['importMappings'];
+  /** Recurring decisions and manual series. Optional, so databases written before it existed need no upgrade. */
+  recurring?: LedgerState['recurring'];
   /**
    * Record keys (see {@link recordId}) of each store in ledger order. Stores return records
    * in key order, but order is meaningful (newest-first transactions, rule precedence).
