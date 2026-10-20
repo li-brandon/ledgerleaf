@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { demoCounts } from '../db';
 import { budgetsForMonth, currentMonth } from '../lib/budget';
+import { routeHref } from '../lib/routes';
 import type { Ledger } from '../store';
 
 export default function Settings({ ledger }: { ledger: Ledger }) {
   const [msg, setMsg] = useState('');
   const [clearing, setClearing] = useState(false);
-  const { accounts, transactions, budgets, categories, lastSync } = ledger.state;
+  const { accounts, transactions, budgets, categories, rules, lastSync } = ledger.state;
   const demo = demoCounts(ledger.state);
   const hasDemo = demo.accounts + demo.transactions + demo.balanceSnapshots > 0;
 
@@ -49,6 +50,18 @@ export default function Settings({ ledger }: { ledger: Ledger }) {
           <button className="btn ghost" onClick={exportJson} disabled={!transactions.length}>Export JSON backup</button>
           <a className="btn ghost" href="#/connections">Import data</a>
         </div>
+      </section>
+      <section className="card">
+        <h3>Categories &amp; rules</h3>
+        <ul className="ruled">
+          <li><span>Categories</span><b>{categories.length}</b></li>
+          <li><span>Auto-categorize rules</span><b>{rules.length}</b></li>
+        </ul>
+        <p className="muted">
+          Add, rename, recolor or delete categories, choose which ones count as spending, and set up rules that
+          categorize and rename imported transactions.
+        </p>
+        <a className="btn ghost" href={routeHref('categories')}>Manage categories &amp; rules</a>
       </section>
       {hasDemo && (
         <section className="card">
