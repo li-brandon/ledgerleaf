@@ -76,6 +76,7 @@ describe('ProviderRegistry', () => {
     expect(providers.list().map(({ id, name, kind, requiresAuth }) => ({ id, name, kind, requiresAuth }))).toEqual([
       { id: 'demo', name: 'Demo Bank (sample data)', kind: 'demo', requiresAuth: false },
       { id: 'csv', name: 'CSV import', kind: 'file', requiresAuth: false },
+      { id: 'plaid', name: 'Bank via Plaid (sandbox)', kind: 'remote', requiresAuth: true },
     ]);
     const csv = providers.get('csv');
     expect(csv?.kind === 'file' && csv.create('').id).toBe('csv');

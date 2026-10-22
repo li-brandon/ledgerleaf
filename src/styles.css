@@ -486,3 +486,4 @@ h3 > .muted { text-transform: none; letter-spacing: 0; font-weight: 500; text-al
   .empty { padding: var(--space-8) var(--space-4); }
   .empty .row > * { flex: 1 1 100%; text-align: center; }
 }
+.plaid-items { list-style: none; padding: 0; margin: 0 0 var(--space-3); display: grid; gap: var(--space-1); font-size: var(--text-sm); }

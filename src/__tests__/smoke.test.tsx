@@ -23,5 +23,6 @@ it('loads demo data and renders every page without errors', async () => {
     expect(screen.queryByRole('alert'), id).toBeNull();
   }
   expect(errors).not.toHaveBeenCalled();
-  expect(fetch).not.toHaveBeenCalled();
+  // The only requests are the Plaid card asking the local Plaid server for its status.
+  expect(fetch.mock.calls.every(([url]) => String(url) === '/api/plaid/status')).toBe(true);
 });

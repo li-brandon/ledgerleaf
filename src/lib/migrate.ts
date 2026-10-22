@@ -87,6 +87,7 @@ function normalizeTransaction(t: Transaction, categories: Category[]): Transacti
   // Edit flags are only ever stored as true.
   if (out.categoryEdited !== true) delete out.categoryEdited;
   if (out.merchantEdited !== true) delete out.merchantEdited;
+  if (typeof out.pending !== 'boolean') delete out.pending;
   const source = t.source ?? sourceFromId(t.id);
   if (source) out.source = source;
   return out;

@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "plaid-server": "node server/plaid-server.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",

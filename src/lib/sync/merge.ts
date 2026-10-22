@@ -9,14 +9,16 @@ export interface MergeOutcome {
   added: number;
   /** Existing transactions whose provider-owned fields changed. */
   updated: number;
+  /** Transactions deleted because the provider removed them. */
+  removed: number;
 }
 
 /**
  * Fields a re-sync may refresh on a transaction it already holds. Everything else
- * (category, categoryId, notes, reviewed, merchant, …) belongs to the user and is never
- * overwritten.
+ * (category, categoryId, notes, reviewed, merchant, …) belongs to the user or to the rules
+ * that ran when it was added, and is never overwritten.
  */
-const PROVIDER_TX_FIELDS = ['date', 'description', 'amount', 'accountId', 'source', 'externalId'] as const;
+const PROVIDER_TX_FIELDS = ['date', 'description', 'amount', 'accountId', 'source', 'externalId', 'pending'] as const;
 /** Account fields a re-sync may refresh; `hidden` stays as the user left it, and so does a name they chose. */
 const PROVIDER_ACCOUNT_FIELDS = ['name', 'type', 'institution', 'currency', 'balance'] as const;
 const accountFields = (prev: Account) =>
@@ -50,7 +52,8 @@ function freeId(id: string, taken: Map<string, unknown>) {
  * do not carry different externalIds. Matches only refresh provider-owned fields, so user
  * edits survive re-syncs. `incoming.balances` update account balances. New transactions
  * always arrive unreviewed, categorized (and possibly renamed) by the first matching rule
- * in `existing.rules`.
+ * in `existing.rules`. `incoming.removed` is applied last and deletes the transactions with
+ * that source and externalId; unknown ones are ignored.
  */
 export function mergeSync(
   existing: Pick<SyncResult, 'accounts' | 'transactions'> & { rules?: readonly Rule[] },
@@ -102,6 +105,13 @@ export function mergeSync(
     added++;
   }
 
-  transactions.sort((a, b) => b.date.localeCompare(a.date));
-  return { accounts: [...accounts.values()], transactions, added, updated };
+  let kept = transactions;
+  if (incoming.removed?.length) {
+    const gone = new Set(incoming.removed.map((r) => JSON.stringify([r.source ?? '', r.externalId])));
+    kept = transactions.filter((t) => !gone.has(dedupeKey(t)));
+  }
+  const removed = transactions.length - kept.length;
+
+  kept.sort((a, b) => b.date.localeCompare(a.date));
+  return { accounts: [...accounts.values()], transactions: kept, added, updated, removed };
 }

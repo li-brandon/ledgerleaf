@@ -2,3 +2,8 @@ node_modules
 dist
 openspec/
 .claude/
+# Plaid sandbox credentials and the local access-token store (see README)
+.env
+.env.*
+!.env.example
+.plaid-data/

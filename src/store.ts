@@ -98,8 +98,8 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
     const merge = (s: LedgerState) => (s === prev ? next : sync(s));
     latest.current = merge(latest.current);
     setState(merge);
-    const { added, updated, received } = outcome;
-    return { added, updated, received };
+    const { added, updated, removed, received } = outcome;
+    return { added, updated, removed, received };
   }, []);
 
   /**

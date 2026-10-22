@@ -47,6 +47,8 @@ export interface Transaction {
   source?: string;
   /** The provider's own id for this transaction. */
   externalId?: string;
+  /** The bank has not posted it yet (providers that report it, e.g. Plaid). */
+  pending?: boolean;
   /** The user chose the category by hand; rules never change it. */
   categoryEdited?: boolean;
   /** The user renamed the merchant by hand; rules never rename it. */
