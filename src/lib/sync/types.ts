@@ -31,13 +31,22 @@ export interface SyncProvider extends ProviderMeta {
   /** Transactions dated on or after `since` (ISO date, inclusive), or all of them without it. */
   fetchTransactions(since?: string): Promise<Transaction[]>;
   fetchBalances?(): Promise<AccountBalance[]>;
+  /** Transactions the provider has deleted since the last sync (incremental providers, e.g. Plaid). */
+  fetchRemovals?(): Promise<RemovedTransaction[]>;
   /** Input rows that could not be read (file providers), known once data has been fetched. */
   readonly skipped?: number;
 }
 
+/** A transaction the provider no longer has, identified by its own id. */
+export interface RemovedTransaction {
+  externalId: string;
+  /** Set by `fetchSync` to the provider id. */
+  source?: string;
+}
+
 /**
- * Shape of a provider backed by a remote service (e.g. a bank aggregator). There is no
- * implementation: the app is local-only and never makes network calls.
+ * A provider backed by a remote service (e.g. a bank aggregator). The only one is
+ * `PlaidProvider`, which talks to the localhost Plaid server, never to Plaid directly.
  */
 export interface RemoteSyncProvider extends SyncProvider {
   kind: 'remote';
@@ -51,4 +60,6 @@ export interface SyncResult {
   accounts: Account[];
   transactions: Transaction[];
   balances?: AccountBalance[];
+  /** Transactions to delete from the ledger. */
+  removed?: RemovedTransaction[];
 }

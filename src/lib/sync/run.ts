@@ -22,7 +22,10 @@ const isAmount = (v: unknown): v is number => typeof v === 'number' && Number.is
 
 /** First problem with a provider's data, or undefined if it is safe to merge. */
 export function findInvalid(r: SyncResult, knownAccountIds: Iterable<string> = []): string | undefined {
-  if (!Array.isArray(r.accounts) || !Array.isArray(r.transactions) || (r.balances && !Array.isArray(r.balances))) {
+  if (
+    !Array.isArray(r.accounts) || !Array.isArray(r.transactions)
+    || (r.balances && !Array.isArray(r.balances)) || (r.removed && !Array.isArray(r.removed))
+  ) {
     return 'returned malformed data';
   }
   const accountIds = new Set(knownAccountIds);
@@ -38,6 +41,10 @@ export function findInvalid(r: SyncResult, knownAccountIds: Iterable<string> = [
     if (!isAmount(t.amount)) return `${what} has an invalid amount`;
     if (typeof t.description !== 'string') return `${what} has no description`;
     if (!accountIds.has(t.accountId)) return `${what} belongs to an unknown account`;
+    if (t.pending !== undefined && typeof t.pending !== 'boolean') return `${what} has an invalid pending flag`;
+  }
+  for (const [i, x] of (r.removed ?? []).entries()) {
+    if (!isText(x?.externalId)) return `removed transaction #${i + 1} has no id`;
   }
   for (const [i, b] of (r.balances ?? []).entries()) {
     if (!accountIds.has(b?.accountId)) return `balance #${i + 1} belongs to an unknown account`;
@@ -64,12 +71,13 @@ export async function fetchSync(
 ): Promise<SyncResult> {
   let result: SyncResult;
   try {
-    const [accounts, transactions, balances] = await Promise.all([
+    const [accounts, transactions, balances, removed] = await Promise.all([
       provider.listAccounts(),
       provider.fetchTransactions(syncSince(state, provider.id)),
       provider.fetchBalances?.(),
+      provider.fetchRemovals?.(),
     ]);
-    result = { accounts, transactions, balances };
+    result = { accounts, transactions, balances, ...(removed && { removed }) };
   } catch (e) {
     throw new SyncError(provider.id, `${provider.name} failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
   }
@@ -80,6 +88,7 @@ export async function fetchSync(
     ...result,
     accounts: result.accounts.map((a) => ({ ...a, source })),
     transactions: result.transactions.map((t) => ({ ...t, source })),
+    ...(result.removed && { removed: result.removed.map((r) => ({ ...r, source })) }),
   };
 }
 
@@ -87,6 +96,7 @@ export interface SyncOutcome {
   state: LedgerState;
   added: number;
   updated: number;
+  removed: number;
   received: number;
 }
 
@@ -125,7 +135,7 @@ function withSnapshots(prev: BalanceSnapshot[], balances: AccountBalance[], toda
 
 /** Merge a fetched result into the ledger and record the sync time for `providerId`. Pure. */
 export function applySync(state: LedgerState, providerId: string, incoming: SyncResult, now = new Date()): SyncOutcome {
-  const { accounts, transactions, added, updated } = mergeSync(state, incoming);
+  const { accounts, transactions, added, updated, removed } = mergeSync(state, incoming);
   const lastSync = now.toISOString();
   const today = localIsoDate(now);
   const next = normalizeLedger({
@@ -136,5 +146,5 @@ export function applySync(state: LedgerState, providerId: string, incoming: Sync
     lastSync,
     syncs: { ...state.syncs, [providerId]: { lastSync } },
   });
-  return { state: next, added, updated, received: incoming.transactions.length };
+  return { state: next, added, updated, removed, received: incoming.transactions.length };
 }

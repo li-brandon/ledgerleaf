@@ -1,6 +1,9 @@
 import { useState } from 'react';
-import { CSV_PROVIDER, providers, type ProviderEntry, type ProviderKind, type SyncProvider } from '../lib/sync';
+import {
+  CSV_PROVIDER, PLAID_PROVIDER, PlaidProvider, providers, type ProviderEntry, type ProviderKind, type SyncProvider,
+} from '../lib/sync';
 import CsvImport from './CsvImport';
+import PlaidConnect from './PlaidConnect';
 import type { Ledger } from '../store';
 
 const KIND_LABEL: Record<ProviderKind, string> = { demo: 'Sample data', file: 'File import', remote: 'Online' };
@@ -19,16 +22,22 @@ export default function Connections({ ledger }: { ledger: Ledger }) {
     try {
       const r = await ledger.runSync(p);
       const updated = r.updated ? `, ${r.updated} updated` : '';
-      setStatus({ ok: true, text: `${p.name}: ${r.added} new of ${r.received} received${updated}${extra()}.` });
+      const removed = r.removed ? `, ${r.removed} removed` : '';
+      setStatus({ ok: true, text: `${p.name}: ${r.added} new of ${r.received} received${updated}${removed}${extra()}.` });
       setErrors(({ [p.id]: _, ...rest }) => rest);
     } catch (e) {
-      const text = e instanceof Error ? e.message : String(e);
-      setStatus({ ok: false, text });
-      setErrors((errs) => ({ ...errs, [p.id]: text }));
+      fail(p.id, e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
     }
   }
+
+  function fail(id: string, text: string) {
+    setStatus({ ok: false, text });
+    setErrors((errs) => ({ ...errs, [id]: text }));
+  }
+
+  const runPlaid = (p: PlaidProvider) => run(p, () => (p.problems.length ? `. ${p.problems.join('. ')}` : ''));
 
   function reportImport(error: string | null) {
     setStatus(error ? { ok: false, text: error } : null);
@@ -57,6 +66,9 @@ export default function Connections({ ledger }: { ledger: Ledger }) {
               {entry.id === CSV_PROVIDER.id ? (
                 <CsvImport ledger={ledger} disabled={busy !== null} onResult={reportImport} onOpen={setWide}
                   onBusy={(b) => setBusy(b ? entry.id : null)} />
+              ) : entry.id === PLAID_PROVIDER.id ? (
+                <PlaidConnect busy={busy} setBusy={setBusy} run={runPlaid}
+                  onError={(text) => fail(entry.id, text)} />
               ) : entry.kind === 'file' ? (
                 <>
                   <label className="btn" aria-disabled={busy !== null}>
