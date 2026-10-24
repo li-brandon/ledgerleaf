@@ -10,12 +10,11 @@ import { budgetPeriod, budgetsForMonth, currentBudgetMonth } from '../lib/budget
 import { transactionsToCsv } from '../lib/csvExport';
 import { routeHref } from '../lib/routes';
 import {
-  CURRENCIES, MAX_START_DAY, THEMES, currencySymbol, ordinal, settingsOf, type Theme,
+  CURRENCIES, MAX_START_DAY, THEMES, THEME_LABEL, currencySymbol, ordinal, settingsOf,
 } from '../lib/settings';
 import { EMPTY_FILTERS, activeFilterCount, applyFilters, filtersHref, hasFilters } from '../lib/txFilters';
 import type { Ledger } from '../store';
 
-const THEME_LABEL: Record<Theme, string> = { light: 'Light', dark: 'Dark', system: 'Match system' };
 
 const START_DAYS = Array.from({ length: MAX_START_DAY }, (_, i) => i + 1);
 

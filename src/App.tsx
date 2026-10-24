@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import CommandPalette from './components/CommandPalette';
 import { NavIcon } from './components/icons';
 import { setCurrency } from './format';
 import {
@@ -35,6 +36,9 @@ const PAGES: Record<RouteId, ComponentType<PageProps>> = {
   settings: Settings,
   categories: Categories,
 };
+
+/** The palette shortcut's modifier as the keyboard labels it. */
+const MOD_KEY = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl+';
 
 /** Read the current route, rewriting the address bar if the hash is unknown or non-canonical. */
 function currentRoute(): Route {
@@ -73,7 +77,8 @@ export default function App() {
     document.title = `${routeLabel(route)} · Ledgerleaf`;
     if (first.current) { first.current = false; return; }
     scrollTo(0, 0);
-    mainRef.current?.focus({ preventScroll: true });
+    // A page may have focused something of its own, e.g. the CSV import card.
+    if (!mainRef.current?.contains(document.activeElement)) mainRef.current?.focus({ preventScroll: true });
   }, [route]);
 
   const Page = PAGES[route];
@@ -96,12 +101,13 @@ export default function App() {
             </a>
           ))}
         </nav>
-        <p className="rail-foot">Stored only in this browser.</p>
+        <p className="rail-foot"><kbd>{MOD_KEY}K</kbd> for commands<br />Stored only in this browser.</p>
       </aside>
       <main id="main" ref={mainRef} tabIndex={-1}>
         {ledger.error && <p className="notice" role="alert">{ledger.error}</p>}
         {ledger.loading ? <p className="muted" role="status">Loading your ledger…</p> : <Page ledger={ledger} params={params} />}
       </main>
+      <CommandPalette onTheme={(theme) => ledger.setSettings({ theme })} />
     </div>
   );
 }

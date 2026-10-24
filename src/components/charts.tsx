@@ -1,10 +1,10 @@
 import { fmtMoney, fmtWhole } from '../format';
 
-/** Categorical slots, assigned to categories in a fixed order (never by rank). */
-const SLOTS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
+/** Categorical slots (`--chart-1…8` in styles.css, retuned for dark), assigned to categories in a fixed order (never by rank). */
+const SLOTS = Array.from({ length: 8 }, (_, i) => `var(--chart-${i + 1})`);
 const SPEND_ORDER = ['Rent', 'Groceries', 'Dining', 'Transport', 'Shopping', 'Utilities', 'Entertainment', 'Health'];
 export const OTHER = 'Other';
-export const OTHER_COLOR = '#a3a29b';
+export const OTHER_COLOR = 'var(--chart-other)';
 
 /** Categories outside the fixed eight fold into "Other". */
 export const chartCategory = (c: string) => (SPEND_ORDER.includes(c) ? c : OTHER);
