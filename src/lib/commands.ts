@@ -5,6 +5,17 @@ import { THEMES, THEME_LABEL, type Theme } from './settings';
 /** A palette entry: it either opens a hash or switches the theme. */
 export type Command = { id: string; label: string; hint: string } & ({ href: string } | { theme: Theme });
 
+/** Whether this is an Apple device, where the palette shortcut is ⌘K rather than Ctrl+K. */
+export const IS_MAC = /Mac|iPhone|iPad/.test(globalThis.navigator?.userAgent ?? '');
+
+type ShortcutEvent = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey' | 'repeat' | 'isComposing'>;
+
+/** Whether a key press is the palette shortcut: ⌘K on a Mac, Ctrl+K elsewhere. Held keys and IME input don't count. */
+export function isPaletteKey(e: ShortcutEvent, isMac: boolean): boolean {
+  return !e.repeat && !e.isComposing && (isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)
+    && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k';
+}
+
 /** Connections with the CSV import card brought into view. */
 export const IMPORT_CSV_HREF = routeHref('connections', { import: 'csv' });
 

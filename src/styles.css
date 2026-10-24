@@ -21,16 +21,16 @@
   --color-nav-foot: #8f8c80;
   --color-on-accent: #fff;
   --color-field: #fff;
-  /* Categorical chart slots, see components/charts.tsx */
+  /* Categorical chart slots, see components/charts.tsx; each at least 3:1 on the surface */
   --chart-1: #2a78d6;
   --chart-2: #eb6834;
-  --chart-3: #1baf7a;
-  --chart-4: #eda100;
-  --chart-5: #e87ba4;
+  --chart-3: #0e8564;
+  --chart-4: #a87000;
+  --chart-5: #c2457c;
   --chart-6: #008300;
   --chart-7: #6250d6;
   --chart-8: #e34948;
-  --chart-other: #a3a29b;
+  --chart-other: #75746d;
 
   /* Spacing (4px base) */
   --space-1: 4px;
@@ -100,10 +100,15 @@
   --color-nav-hover: #ffffff0f;
   --color-on-accent: #0e1310;
   --color-field: #121814;
-  /* Slots too dark to read on the night surface, lifted to at least 4.5:1 */
+  /* Chart slots for the night surface, every one at least 4.5:1 */
   --chart-1: #4b8fe6;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-5: #e87ba4;
   --chart-6: #3fae3f;
   --chart-7: #8b7cf0;
+  --chart-8: #ec5e5c;
+  --chart-other: #a3a29b;
 
   color-scheme: dark;
 }

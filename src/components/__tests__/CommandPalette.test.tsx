@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { THEME_KEY } from '../../theme';
@@ -11,13 +11,17 @@ const options = () => within(palette()!).queryAllByRole('option').map((o) => o.t
 const selected = () => within(palette()!).getByRole('option', { selected: true });
 
 describe('command palette', () => {
-  it('opens with Cmd+K and Ctrl+K, takes focus and gives it back on Escape', async () => {
+  it('opens with Ctrl+K off a Mac, takes focus and gives it back on Escape', async () => {
     const user = userEvent.setup();
     await renderApp();
     const before = screen.getByRole('button', { name: 'Load demo data' });
     before.focus();
 
+    // jsdom's user agent isn't a Mac, so ⌘K does nothing.
     await user.keyboard('{Meta>}k{/Meta}');
+    expect(palette()).toBeNull();
+
+    await user.keyboard('{Control>}k{/Control}');
     expect(palette()).toBeInTheDocument();
     expect(palette()).toHaveAttribute('aria-modal', 'true');
     expect(input()).toHaveFocus();
@@ -31,6 +35,34 @@ describe('command palette', () => {
     expect(palette()).toBeInTheDocument();
     // The shortcut toggles it closed again.
     await user.keyboard('{Control>}k{/Control}');
+    expect(palette()).toBeNull();
+  });
+
+  it('ignores a held or composing shortcut', async () => {
+    await renderApp();
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true, repeat: true });
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true, isComposing: true });
+    expect(palette()).toBeNull();
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    expect(palette()).toBeInTheDocument();
+  });
+
+  it('keeps focus in the input when the dialog around it is clicked', async () => {
+    const user = userEvent.setup();
+    await renderApp();
+    await user.keyboard('{Control>}k{/Control}');
+    await user.type(input(), 'zzz');
+
+    await user.click(screen.getByText('No matches'));
+    expect(input()).toHaveFocus();
+    await user.click(palette()!);
+    expect(input()).toHaveFocus();
+    await user.click(within(palette()!).getByRole('listbox'));
+    expect(input()).toHaveFocus();
+    await user.keyboard('{Tab}');
+    expect(input()).toHaveFocus();
+
+    await user.keyboard('{Escape}');
     expect(palette()).toBeNull();
   });
 

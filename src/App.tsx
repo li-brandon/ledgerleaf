@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import CommandPalette from './components/CommandPalette';
 import { NavIcon } from './components/icons';
 import { setCurrency } from './format';
+import { IS_MAC } from './lib/commands';
 import {
   ROUTES, canonicalHash, navRoute, parseRoute, routeHref, routeLabel, type Route, type RouteId, type RouteParams,
 } from './lib/routes';
@@ -38,7 +39,7 @@ const PAGES: Record<RouteId, ComponentType<PageProps>> = {
 };
 
 /** The palette shortcut's modifier as the keyboard labels it. */
-const MOD_KEY = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl+';
+const MOD_KEY = IS_MAC ? '⌘' : 'Ctrl+';
 
 /** Read the current route, rewriting the address bar if the hash is unknown or non-canonical. */
 function currentRoute(): Route {

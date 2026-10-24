@@ -29,7 +29,11 @@ describe('chart colors', () => {
     for (const t of slots) expect(light[t!], t).toMatch(/^#[0-9a-f]{6}$/);
   });
 
+  it('stand out from the card surface in light mode', () => {
+    for (const t of slots) expect(contrast(light[t!], light['--color-surface']), t).toBeGreaterThanOrEqual(3);
+  });
+
   it('stand out from the card surface in dark mode', () => {
-    for (const t of slots) expect(contrast(dark[t!], dark['--color-surface']), t).toBeGreaterThanOrEqual(3);
+    for (const t of slots) expect(contrast(dark[t!], dark['--color-surface']), t).toBeGreaterThanOrEqual(4.5);
   });
 });

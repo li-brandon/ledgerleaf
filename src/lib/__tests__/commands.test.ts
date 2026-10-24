@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { IMPORT_CSV_HREF, matchCommands, searchCommand } from '../commands';
+import { IMPORT_CSV_HREF, isPaletteKey, matchCommands, searchCommand } from '../commands';
 import { ROUTES, SUBPAGES, parseRoute, routeHref } from '../routes';
 
 describe('matchCommands', () => {
@@ -33,5 +33,33 @@ describe('searchCommand', () => {
   it('is absent for a blank query', () => {
     expect(searchCommand('')).toBeNull();
     expect(searchCommand('   ')).toBeNull();
+  });
+});
+
+describe('isPaletteKey', () => {
+  const key = (mods: Partial<Parameters<typeof isPaletteKey>[0]> = {}) =>
+    ({ key: 'k', metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, repeat: false, isComposing: false, ...mods });
+
+  it('is ⌘K on a Mac and not Ctrl+K', () => {
+    expect(isPaletteKey(key({ metaKey: true }), true)).toBe(true);
+    expect(isPaletteKey(key({ metaKey: true, key: 'K' }), true)).toBe(true);
+    expect(isPaletteKey(key({ ctrlKey: true }), true)).toBe(false);
+  });
+
+  it('is Ctrl+K elsewhere and not ⌘K', () => {
+    expect(isPaletteKey(key({ ctrlKey: true }), false)).toBe(true);
+    expect(isPaletteKey(key({ metaKey: true }), false)).toBe(false);
+  });
+
+  it('ignores held keys, IME composition, extra modifiers and other keys', () => {
+    for (const isMac of [true, false]) {
+      const mod = isMac ? { metaKey: true } : { ctrlKey: true };
+      expect(isPaletteKey(key({ ...mod, repeat: true }), isMac)).toBe(false);
+      expect(isPaletteKey(key({ ...mod, isComposing: true }), isMac)).toBe(false);
+      expect(isPaletteKey(key({ ...mod, shiftKey: true }), isMac)).toBe(false);
+      expect(isPaletteKey(key({ ...mod, altKey: true }), isMac)).toBe(false);
+      expect(isPaletteKey(key({ ...mod, key: 'j' }), isMac)).toBe(false);
+      expect(isPaletteKey(key(), isMac)).toBe(false);
+    }
   });
 });

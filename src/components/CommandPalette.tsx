@@ -1,9 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
-import { matchCommands, searchCommand, type Command } from '../lib/commands';
+import { IS_MAC, isPaletteKey, matchCommands, searchCommand, type Command } from '../lib/commands';
 import type { Theme } from '../lib/settings';
-
-/** Whether a key press is the palette shortcut: ⌘K on a Mac, Ctrl+K elsewhere. */
-const isPaletteKey = (e: globalThis.KeyboardEvent) => (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k';
 
 /**
  * ⌘K / Ctrl+K command palette: jump to a page, search transactions, import a CSV or switch
@@ -22,7 +19,7 @@ export default function CommandPalette({ onTheme }: { onTheme(theme: Theme): voi
 
   useEffect(() => {
     const on = (e: globalThis.KeyboardEvent) => {
-      if (!isPaletteKey(e)) return;
+      if (!isPaletteKey(e, IS_MAC)) return;
       e.preventDefault();
       setOpen((o) => !o);
       setQuery('');
@@ -64,7 +61,11 @@ export default function CommandPalette({ onTheme }: { onTheme(theme: Theme): voi
   return (
     <div className="palette-backdrop" onMouseDown={() => setOpen(false)}>
       <div className="palette" role="dialog" aria-modal="true" aria-label="Command palette"
-        onMouseDown={(e) => e.stopPropagation()} onKeyDown={onKeyDown}>
+        onMouseDown={(e) => {
+          e.stopPropagation();
+          // Clicking anywhere but the input must not take focus out of it; option clicks still fire.
+          if (e.target !== inputRef.current) e.preventDefault();
+        }} onKeyDown={onKeyDown}>
         <input ref={inputRef} type="text" role="combobox" aria-label="Search commands" aria-expanded="true"
           aria-controls={`${id}-list`} aria-autocomplete="list" aria-activedescendant={items.length ? optionId(active) : undefined}
           placeholder="Jump to a page, search transactions…" value={query} autoComplete="off" spellCheck={false}
