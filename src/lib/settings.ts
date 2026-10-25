@@ -17,6 +17,8 @@ export const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'NZD', 'JPY', 'CHF
 
 export const THEMES: readonly Theme[] = ['light', 'dark', 'system'];
 
+export const THEME_LABEL: Record<Theme, string> = { light: 'Light', dark: 'Dark', system: 'Match system' };
+
 /** Latest start day allowed, so every month has it. */
 export const MAX_START_DAY = 28;
 

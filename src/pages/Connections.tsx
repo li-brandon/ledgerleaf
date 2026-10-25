@@ -1,21 +1,29 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CSV_PROVIDER, PLAID_PROVIDER, PlaidProvider, providers, type ProviderEntry, type ProviderKind, type SyncProvider,
 } from '../lib/sync';
 import CsvImport from './CsvImport';
 import PlaidConnect from './PlaidConnect';
-import type { Ledger } from '../store';
+import type { PageProps } from '../App';
 
 const KIND_LABEL: Record<ProviderKind, string> = { demo: 'Sample data', file: 'File import', remote: 'Online' };
 
 type Status = { ok: boolean; text: string };
 
-export default function Connections({ ledger }: { ledger: Ledger }) {
+export default function Connections({ ledger, params }: PageProps) {
   const [status, setStatus] = useState<Status | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [wide, setWide] = useState(false);
   const { lastSync, syncs, accounts, transactions } = ledger.state;
+  const csvRef = useRef<HTMLElement>(null);
+
+  // `?import=csv` (the command palette's "Import CSV") brings the CSV import card into view.
+  useEffect(() => {
+    if (params.import !== 'csv') return;
+    csvRef.current?.scrollIntoView({ block: 'start' });
+    csvRef.current?.focus({ preventScroll: true });
+  }, [params.import]);
 
   async function run(p: SyncProvider, extra = () => '') {
     setBusy(p.id);
@@ -57,13 +65,15 @@ export default function Connections({ ledger }: { ledger: Ledger }) {
       <div className="grid two">
         {providers.list().map((entry) => {
           const synced = syncs?.[entry.id]?.lastSync;
+          const isCsv = entry.id === CSV_PROVIDER.id;
           return (
-            <section className={entry.id === CSV_PROVIDER.id && wide ? 'card span-all' : 'card'} key={entry.id}>
+            <section className={isCsv && wide ? 'card span-all' : 'card'} key={entry.id}
+              ref={isCsv ? csvRef : undefined} tabIndex={isCsv ? -1 : undefined}>
               <h3>{entry.name}<span>{KIND_LABEL[entry.kind]}</span></h3>
               {entry.description && <p className="muted">{entry.description}</p>}
               <p className="muted">{synced ? `Last synced ${new Date(synced).toLocaleString()}` : 'Never synced'}</p>
               {errors[entry.id] && <p className="notice error" role="alert">{errors[entry.id]}</p>}
-              {entry.id === CSV_PROVIDER.id ? (
+              {isCsv ? (
                 <CsvImport ledger={ledger} disabled={busy !== null} onResult={reportImport} onOpen={setWide}
                   onBusy={(b) => setBusy(b ? entry.id : null)} />
               ) : entry.id === PLAID_PROVIDER.id ? (

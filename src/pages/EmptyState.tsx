@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { IMPORT_CSV_HREF } from '../lib/commands';
 import { MockProvider } from '../lib/sync';
 import type { Ledger } from '../store';
 
@@ -21,7 +22,7 @@ export default function EmptyState({ ledger }: { ledger: Ledger }) {
       {error && <p className="notice error" role="alert">{error}</p>}
       <div className="row">
         <button onClick={loadDemo} disabled={busy}>{busy ? 'Loading demo data…' : 'Load demo data'}</button>
-        <a className="btn ghost" href="#/connections">Import CSV</a>
+        <a className="btn ghost" href={IMPORT_CSV_HREF}>Import CSV</a>
       </div>
     </div>
   );

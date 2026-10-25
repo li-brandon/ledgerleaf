@@ -12,6 +12,8 @@ export default defineConfig(({ mode }) => {
       proxy: { '/api/plaid': `http://127.0.0.1:${port}` },
     },
     test: {
+      // Load the stylesheet for real, so tests can read the design tokens (`styles.css?raw`).
+      css: { include: [/styles\.css/] },
       coverage: {
         provider: 'v8',
         include: ['src/lib/**'],
