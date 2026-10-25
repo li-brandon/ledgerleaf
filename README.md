@@ -23,6 +23,8 @@ npm run preview    # serve the built dist/ locally (http://localhost:4173 by def
 
 `npm run test:coverage` runs the tests with V8 coverage for `src/lib` (80% line threshold, set in `vite.config.ts`).
 
+CI (`.github/workflows/ci.yml`) runs `npm ci`, the tests, `tsc --noEmit`, the build and `npm audit --audit-level=high` on every pull request and on pushes to `main`.
+
 ## Trying it out
 
 ### Load demo data
