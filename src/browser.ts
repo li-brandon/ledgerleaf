@@ -28,3 +28,48 @@ export function rememberedTxFilters(): TxFilters {
     return EMPTY_FILTERS;
   }
 }
+
+/**
+ * Whether the browser keeps this origin's data (IndexedDB included) under storage pressure.
+ * `unsupported` covers browsers without the Storage API and ones whose check fails.
+ */
+export type StoragePersistence = 'persistent' | 'best-effort' | 'unsupported';
+
+const storageManager = (): Partial<StorageManager> | undefined => globalThis.navigator?.storage;
+
+export async function persistenceStatus(storage = storageManager()): Promise<StoragePersistence> {
+  if (typeof storage?.persisted !== 'function' || typeof storage.persist !== 'function') return 'unsupported';
+  try {
+    return (await storage.persisted()) ? 'persistent' : 'best-effort';
+  } catch {
+    return 'unsupported';
+  }
+}
+
+/**
+ * Ask the browser to keep this origin's data, unless it already does. Firefox prompts for this;
+ * Chrome decides by itself. A failed request leaves the data best effort. Never rejects.
+ */
+export async function requestPersistence(storage = storageManager()): Promise<StoragePersistence> {
+  const status = await persistenceStatus(storage);
+  if (status !== 'best-effort') return status;
+  try {
+    return (await storage!.persist!()) ? 'persistent' : 'best-effort';
+  } catch {
+    return 'best-effort';
+  }
+}
+
+let persistenceRequested = false;
+
+/** {@link requestPersistence}, at most once per page load, so a refusal is not asked again on every import. */
+export function requestPersistenceOnce() {
+  if (persistenceRequested) return;
+  persistenceRequested = true;
+  void requestPersistence();
+}
+
+/** For tests: let {@link requestPersistenceOnce} ask again. */
+export function forgetPersistenceRequest() {
+  persistenceRequested = false;
+}
