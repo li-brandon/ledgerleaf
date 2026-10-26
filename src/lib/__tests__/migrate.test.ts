@@ -133,6 +133,34 @@ describe('migrate', () => {
     expect(migrate(JSON.parse(JSON.stringify(s)), MONTH)).toEqual(s);
   });
 
+  it('keeps a CSV mapping\'s delimiter through a round trip and drops invalid ones', () => {
+    const s = migrate({
+      ...migrate(v1, MONTH),
+      importMappings: {
+        semi: { date: 'Datum', description: 'Text', amount: 'Belopp', delimiter: ';' },
+        tab: { date: 'Date', description: 'Memo', amount: 'Amount', delimiter: '\t' },
+        old: { date: 'Date', description: 'Memo', amount: 'Amount' },
+        bad: { date: 'Date', description: 'Memo', amount: 'Amount', delimiter: '|' },
+      },
+    } as never, MONTH);
+    expect(s.importMappings).toEqual({
+      semi: { date: 'Datum', description: 'Text', amount: 'Belopp', delimiter: ';' },
+      tab: { date: 'Date', description: 'Memo', amount: 'Amount', delimiter: '\t' },
+      old: { date: 'Date', description: 'Memo', amount: 'Amount' },
+      bad: { date: 'Date', description: 'Memo', amount: 'Amount' },
+    });
+    expect(migrate(JSON.parse(JSON.stringify(s)), MONTH)).toEqual(s);
+  });
+
+  it('trims and upper-cases account currency codes', () => {
+    const s = migrate({ accounts: [
+      { id: 'a', name: 'A', type: 'checking', currency: ' eur ' },
+      { id: 'b', name: 'B', type: 'checking', currency: 'Sek' },
+      { id: 'c', name: 'C', type: 'checking', currency: ' ' },
+    ] } as never, MONTH);
+    expect(s.accounts.map((a) => a.currency)).toEqual(['EUR', 'SEK', 'USD']);
+  });
+
   it('fills fields missing from stored categories and keeps the exclude flag the user set', () => {
     const base = migrate(v1, MONTH);
     const s = migrate({

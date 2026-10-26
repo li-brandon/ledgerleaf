@@ -136,9 +136,14 @@ export interface CsvMapping {
   decimal?: DecimalSeparator;
   /** Order of month, day and year in numeric dates. When unset it is detected from the file's dates. */
   dateOrder?: DateOrder;
+  /** Character that separates the file's cells. When unset it is detected from the file's first lines. */
+  delimiter?: CsvDelimiter;
 }
 
 export type DecimalSeparator = '.' | ',';
+
+/** Comma, semicolon or tab. */
+export type CsvDelimiter = ',' | ';' | '\t';
 
 /** Month first (12/31/2026), day first (31/12/2026) or year first (2026-12-31). */
 export type DateOrder = 'MDY' | 'DMY' | 'YMD';

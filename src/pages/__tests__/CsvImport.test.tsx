@@ -301,6 +301,69 @@ describe('CSV import flow', () => {
     expect(ui.getByText('1 rows ready to import.')).toBeInTheDocument();
   });
 
+  it('detects a semicolon delimiter, lets the user override it, and saves it with the import', async () => {
+    const user = userEvent.setup();
+    await renderApp(undefined, '#/connections');
+    const ui = within(card());
+    const csv = 'Date;Description;Amount\n31.12.2026;"Kaffe; liten";-12,50\n01.10.2026;Lön;25.000,00';
+    await user.upload(fileInput(), csvFile(csv, 'sek.csv'));
+    await ui.findByText('sek.csv');
+    const delimiter = ui.getByLabelText('Delimiter');
+    expect(delimiter).toHaveValue('');
+    expect(within(delimiter).getByRole('option', { name: 'Detect (Semicolon)' })).toBeInTheDocument();
+    expect(ui.getByLabelText(/^Description/)).toHaveValue('Description');
+    expect(ui.getByText('Kaffe; liten')).toBeInTheDocument();
+    expect(ui.getByText('2 rows ready to import.')).toBeInTheDocument();
+
+    // Read with commas, the file has other columns, so they are detected again.
+    await user.selectOptions(delimiter, 'Comma');
+    expect(ui.getByLabelText('Delimiter')).toHaveValue(',');
+    expect(ui.getByText('Detected from the header row')).toBeInTheDocument();
+    expect(ui.getByLabelText(/^Date$/)).toHaveValue('Date;Description;Amount');
+    expect(ui.getByRole('alert')).toHaveTextContent('Choose the column that holds the description.');
+    await user.selectOptions(ui.getByLabelText('Delimiter'), 'Semicolon');
+    expect(ui.getByLabelText(/^Date$/)).toHaveValue('Date');
+    expect(ui.getByText('2 rows ready to import.')).toBeInTheDocument();
+    await user.click(ui.getByRole('button', { name: 'Import 2 rows' }));
+    await ui.findByRole('status');
+    const state = await stored();
+    expect(state.transactions.map((t) => [t.description, t.amount]).sort()).toEqual([['Kaffe; liten', -12.5], ['Lön', 25000]]);
+    expect(state.importMappings?.['csv-sek']).toMatchObject({ date: 'Date', delimiter: ';', decimal: ',', dateOrder: 'DMY' });
+
+    // Left on Detect, the delimiter used is saved too; the account's saved mapping then offers it.
+    await user.upload(fileInput(), csvFile('Date\tMemo\tAmount\n2026-10-01\tTea\t-3', 'tab.csv'));
+    await ui.findByText('tab.csv');
+    expect(within(ui.getByLabelText('Delimiter')).getByRole('option', { name: 'Detect (Tab)' })).toBeInTheDocument();
+    await user.click(ui.getByRole('button', { name: 'Import 1 rows' }));
+    await ui.findByRole('status');
+    expect((await stored()).importMappings?.['csv-tab']).toMatchObject({ delimiter: '\t' });
+
+    await user.upload(fileInput(), csvFile(`${csv}\n02.10.2026;Hyra;-8.000,00`, 'sek2.csv'));
+    await ui.findByText('sek2.csv');
+    expect(ui.getByLabelText('Account')).toHaveValue('csv-sek');
+    expect(ui.getByText('Saved mapping for this account')).toBeInTheDocument();
+    expect(ui.getByLabelText('Delimiter')).toHaveValue(';');
+    expect(ui.getByText('3 rows ready to import.')).toBeInTheDocument();
+  });
+
+  it('reads a saved mapping with its own delimiter when the file\'s is not detected', async () => {
+    const user = userEvent.setup();
+    await renderApp({
+      ...emptyLedger(),
+      accounts: [{ id: 'giro', name: 'Giro', type: 'checking' }],
+      importMappings: { giro: { date: 'Datum', description: 'Text', amount: 'Belopp', delimiter: ';' } },
+    }, '#/connections');
+    const ui = within(card());
+    // The uneven last row leaves detection on its comma default.
+    await user.upload(fileInput(), csvFile('Datum;Text;Belopp\n2026-10-01;Tea;-3\n2026-10-02;Rent;-800;', 'giro.csv'));
+    await ui.findByText('giro.csv');
+    expect(within(ui.getByLabelText('Delimiter')).getByRole('option', { name: 'Detect (Comma)' })).toBeInTheDocument();
+    expect(ui.getByLabelText('Account')).toHaveValue('giro');
+    expect(ui.getByText('Saved mapping for this account')).toBeInTheDocument();
+    expect(ui.getByLabelText('Delimiter')).toHaveValue(';');
+    expect(ui.getByText('2 rows ready to import.')).toBeInTheDocument();
+  });
+
   it('blocks the import until required columns are mapped and the new account is named', async () => {
     const user = userEvent.setup();
     await renderApp(undefined, '#/connections');

@@ -54,7 +54,8 @@ export class CsvImportProvider implements SyncProvider {
     if (!o) {
       return (this.parsed = { ...parseTransactionsCsv(this.text), errors: [] });
     }
-    const table = readCsvTable(this.text);
+    // Read with the mapping's delimiter, else the detected one, as the import screen's preview is.
+    const table = readCsvTable(this.text, o.mapping.delimiter);
     const { transactions, errors } = applyMapping(table, o.mapping, o.accountId, { savedDecimal: o.savedDecimal, savedDateOrder: o.savedDateOrder });
     return (this.parsed = { accounts: o.newAccount ? [o.newAccount] : [], transactions, skipped: errors.length, errors, table });
   }

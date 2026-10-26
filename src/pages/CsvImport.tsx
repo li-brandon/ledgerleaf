@@ -1,8 +1,9 @@
 import { useMemo, useState, type DragEvent } from 'react';
-import { normalizeDate, slug } from '../lib/csv';
+import { DELIMITERS, detectDelimiter, normalizeDate, slug } from '../lib/csv';
 import {
-  FIELD_LABEL, applyMapping, currencyDecimal, detectOrder, detectSeparator, errorRowsCsv, mappingFor, mappingProblem, readCsvTable,
-  withImportMapping, type CsvMapping, type CsvTable, type DateOrder, type DecimalSeparator, type MappingField, type RowError,
+  FIELD_LABEL, applyMapping, currencyDecimal, detectMapping, detectOrder, detectSeparator, errorRowsCsv, mappingProblem, readCsvTable,
+  withImportMapping, type CsvDelimiter, type CsvMapping, type CsvTable, type DateOrder, type DecimalSeparator, type MappingField,
+  type RowError,
 } from '../lib/csvMapping';
 import { settingsOf } from '../lib/settings';
 import { CsvImportProvider } from '../lib/sync';
@@ -26,8 +27,33 @@ const DATE_ORDER_LABEL: Record<DateOrder, string> = {
   MDY: 'Month first: 12/31/2026', DMY: 'Day first: 31/12/2026', YMD: 'Year first: 2026-12-31',
 };
 const DATE_ORDERS: DateOrder[] = ['MDY', 'DMY', 'YMD'];
+const DELIMITER_LABEL: Record<CsvDelimiter, string> = { ',': 'Comma', ';': 'Semicolon', '\t': 'Tab' };
 
-interface Loaded { name: string; text: string; table: CsvTable }
+/** A dropped file, read as a table once per delimiter asked for. */
+interface Loaded {
+  name: string;
+  text: string;
+  /** The delimiter detected from the file's first lines. */
+  detected: CsvDelimiter;
+  /** The file read with `delimiter`, by default the detected one. */
+  table(delimiter?: CsvDelimiter): CsvTable;
+}
+
+function loaded(name: string, text: string): Loaded {
+  const detected = detectDelimiter(text);
+  const tables = new Map<CsvDelimiter, CsvTable>();
+  return {
+    name, text, detected,
+    table(delimiter = detected) {
+      if (!tables.has(delimiter)) tables.set(delimiter, readCsvTable(text, delimiter));
+      return tables.get(delimiter)!;
+    },
+  };
+}
+
+/** Whether `saved` fits the file read with its own delimiter, the one its columns were named under. */
+const fits = (f: Loaded, saved: CsvMapping) => !mappingProblem(saved, f.table(saved.delimiter).headers);
+
 interface Summary { file: string; account: string; added: number; duplicates: number; errors: RowError[]; table: CsvTable }
 
 /** An account id for a new account named `name` that no existing account uses. */
@@ -81,10 +107,10 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
   const [importing, setImporting] = useState(false);
   const [summary, setSummary] = useState<Summary | null>(null);
 
-  /** Use the account's saved mapping if it fits this file, otherwise detect one from the headers. */
-  function remap(table: CsvTable, accountId: string) {
+  /** Use the account's saved mapping if it fits this file, otherwise detect one from the headers (read with the detected delimiter). */
+  function remap(f: Loaded, accountId: string) {
     const saved = accountId === NEW ? undefined : importMappings?.[accountId];
-    const m = mappingFor(table.headers, saved);
+    const m = saved && fits(f, saved) ? saved : detectMapping(f.table().headers);
     setMapping(m);
     setFromSaved(m === saved);
     setDecimalChosen(false);
@@ -95,18 +121,17 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
     if (!f) return;
     setProblem('');
     if (f.size > MAX_BYTES) return setProblem(`${f.name} is larger than 20 MB.`);
-    const text = await f.text();
-    const table = readCsvTable(text);
-    if (!table.rows.length) return setProblem(`${f.name} has no rows to import.`);
+    const next = loaded(f.name, await f.text());
+    if (!next.table().rows.length) return setProblem(`${f.name} has no rows to import.`);
     // Offer the account this file's layout was imported into before; an unseen layout is
     // most likely a different account, so default to creating one.
-    const known = visible.find((a) => importMappings?.[a.id] && !mappingProblem(importMappings[a.id], table.headers));
+    const known = visible.find((a) => importMappings?.[a.id] && fits(next, importMappings[a.id]));
     const accountId = known?.id ?? NEW;
-    setFile({ name: f.name, text, table });
+    setFile(next);
     setTarget(accountId);
     setNewName(fileStem(f.name));
     setSummary(null);
-    remap(table, accountId);
+    remap(next, accountId);
     onOpen(true);
   }
 
@@ -119,7 +144,14 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
 
   function chooseTarget(id: string) {
     setTarget(id);
-    if (file) remap(file.table, id);
+    if (file) remap(file, id);
+  }
+
+  /** Read the file with `delimiter` (unset: the detected one). Its columns change, so they are detected again. */
+  function setDelimiter(delimiter?: CsvDelimiter) {
+    if (!file) return;
+    setMapping((m) => (m ? { ...detectMapping(file.table(delimiter).headers), decimal: m.decimal, dateOrder: m.dateOrder, delimiter } : m));
+    setFromSaved(false);
   }
 
   function setField(field: MappingField, col: string) {
@@ -141,15 +173,17 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
     });
   }
 
-  const mappingError = file && mapping ? mappingProblem(mapping, file.table.headers) : undefined;
+  // The table as the import will read it (see CsvImportProvider): with the mapping's delimiter, else the detected one.
+  const table = file && mapping ? file.table(mapping.delimiter) : null;
+  const mappingError = table && mapping ? mappingProblem(mapping, table.headers) : undefined;
   const nameError = target === NEW && !newName.trim() ? 'Name the new account.' : undefined;
   const savedDecimal = !decimalChosen;
   const savedDateOrder = !dateOrderChosen;
   const check = useMemo(
-    () => (file && mapping && !mappingError ? applyMapping(file.table, mapping, 'preview', { savedDecimal, savedDateOrder }) : null),
-    [file, mapping, mappingError, savedDecimal, savedDateOrder],
+    () => (table && mapping && !mappingError ? applyMapping(table, mapping, 'preview', { savedDecimal, savedDateOrder }) : null),
+    [table, mapping, mappingError, savedDecimal, savedDateOrder],
   );
-  const detected = useMemo(() => (file && mapping ? detectSeparator(file.table, mapping) : undefined), [file, mapping]);
+  const detected = useMemo(() => (table && mapping ? detectSeparator(table, mapping) : undefined), [table, mapping]);
   const usual = currencyDecimal(currency);
   const ambiguous = !!check?.errors.some((e) => e.kind === 'ambiguous');
   const saved = savedDecimal ? mapping?.decimal : undefined;
@@ -158,8 +192,8 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
     setMapping((m) => (m ? { ...m, decimal } : m));
     setDecimalChosen(true);
   };
-  const detectedOrder = useMemo(() => (file && mapping ? detectOrder(file.table, mapping) : undefined), [file, mapping]);
-  const dateCol = file && mapping ? file.table.headers.indexOf(mapping.date) : -1;
+  const detectedOrder = useMemo(() => (table && mapping ? detectOrder(table, mapping) : undefined), [table, mapping]);
+  const dateCol = table && mapping ? table.headers.indexOf(mapping.date) : -1;
   const ambiguousDates = check?.errors.filter((e) => e.kind === 'ambiguous-date').map((e) => (e.cells[dateCol] ?? '').trim()) ?? [];
   const savedOrder = savedDateOrder ? mapping?.dateOrder : undefined;
   const orderConflict = mapping?.dateOrder && detectedOrder && detectedOrder !== mapping.dateOrder ? detectedOrder : undefined;
@@ -172,22 +206,25 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
   };
 
   async function runImport() {
-    if (!file || !mapping || mappingError || nameError) return;
+    if (!file || !table || !mapping || mappingError || nameError) return;
     const newAccount: Account | undefined = target === NEW
       ? { id: newAccountId(newName, accounts), name: newName.trim(), type: newType }
       : undefined;
     const accountId = newAccount?.id ?? target;
     const accountName = newAccount?.name ?? accounts.find((a) => a.id === target)?.name ?? '';
     const p = new CsvImportProvider(file.text, { mapping, accountId, newAccount, savedDecimal, savedDateOrder });
-    // Remember a separator and date order the rows showed, so a later file whose rows don't show one is offered it.
-    const next = { ...mapping, decimal: mapping.decimal ?? detected, dateOrder: mapping.dateOrder ?? detectedOrder };
+    // Remember a separator and date order the rows showed, so a later file whose rows don't show one is offered it,
+    // and the delimiter the file was read with, so its columns are found again.
+    const next = {
+      ...mapping, decimal: mapping.decimal ?? detected, dateOrder: mapping.dateOrder ?? detectedOrder, delimiter: mapping.delimiter ?? file.detected,
+    };
     setImporting(true);
     onBusy(true);
     try {
       const r = await ledger.runSync(p, (s) => withImportMapping(s, accountId, next));
       setSummary({
         file: file.name, account: accountName, added: r.added, duplicates: r.received - r.added,
-        errors: p.errors, table: file.table,
+        errors: p.errors, table,
       });
       onResult(null);
       close();
@@ -217,7 +254,7 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
       <span>{FIELD_LABEL[field]}{optional && <em> optional</em>}</span>
       <select value={mapping?.[field] ?? ''} onChange={(e) => setField(field, e.target.value)}>
         <option value="">{optional ? 'None' : 'Choose a column…'}</option>
-        {file!.table.headers.map((h) => <option key={h} value={h}>{h}</option>)}
+        {table!.headers.map((h) => <option key={h} value={h}>{h}</option>)}
       </select>
     </label>
   );
@@ -260,10 +297,10 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
       )}
       {problem && <p className="notice error" role="alert">{problem}</p>}
 
-      {file && mapping && (
+      {file && table && mapping && (
         <>
           <div className="row between">
-            <p className="file-name"><b>{file.name}</b> <span className="muted">{file.table.rows.length} rows</span></p>
+            <p className="file-name"><b>{file.name}</b> <span className="muted">{table.rows.length} rows</span></p>
             <button className="btn ghost" onClick={close} disabled={importing}>Cancel</button>
           </div>
 
@@ -296,6 +333,14 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
             <legend>
               Columns <span className="muted">{fromSaved ? 'Saved mapping for this account' : 'Detected from the header row'}</span>
             </legend>
+            <label className="field">
+              <span>Delimiter</span>
+              <select value={mapping.delimiter ?? ''}
+                onChange={(e) => setDelimiter((e.target.value || undefined) as CsvDelimiter | undefined)}>
+                <option value="">Detect ({DELIMITER_LABEL[file.detected]})</option>
+                {DELIMITERS.map((d) => <option key={d} value={d}>{DELIMITER_LABEL[d]}</option>)}
+              </select>
+            </label>
             {columnSelect('date', false)}
             <label className="field">
               <span>Date order</span>
@@ -358,12 +403,12 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
             </label>
           </fieldset>
 
-          <h3>Preview <span className="more muted">First {Math.min(PREVIEW_ROWS, file.table.rows.length)} of {file.table.rows.length} rows</span></h3>
+          <h3>Preview <span className="more muted">First {Math.min(PREVIEW_ROWS, table.rows.length)} of {table.rows.length} rows</span></h3>
           <div className="table-scroll">
             <table className="tx preview">
               <thead>
                 <tr>
-                  {file.table.headers.map((h) => (
+                  {table.headers.map((h) => (
                     <th key={h} className={used.has(h) ? 'mapped' : ''}>
                       {h}{used.has(h) && <span className="role">{FIELD_LABEL[used.get(h)!]}</span>}
                     </th>
@@ -371,9 +416,9 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
                 </tr>
               </thead>
               <tbody>
-                {file.table.rows.slice(0, PREVIEW_ROWS).map((r, i) => (
+                {table.rows.slice(0, PREVIEW_ROWS).map((r, i) => (
                   <tr key={i}>
-                    {file.table.headers.map((h, j) => <td key={h} className={used.has(h) ? 'mapped' : ''}>{r[j] ?? ''}</td>)}
+                    {table.headers.map((h, j) => <td key={h} className={used.has(h) ? 'mapped' : ''}>{r[j] ?? ''}</td>)}
                   </tr>
                 ))}
               </tbody>

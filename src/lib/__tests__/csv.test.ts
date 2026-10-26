@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectDateOrder, detectDecimal, normalizeDate, parseAmount, parseCsvRows, parseTransactionsCsv, readAmount, readDate } from '../csv';
+import { detectDateOrder, detectDecimal, detectDelimiter, normalizeDate, parseAmount, parseCsvRows, parseTransactionsCsv, readAmount, readDate } from '../csv';
 
 describe('parseCsvRows', () => {
   it('handles quotes, escaped quotes, CRLF and blank lines', () => {
@@ -29,6 +29,52 @@ describe('parseCsvRows', () => {
   it('handles empty cells, trailing commas and a missing final newline', () => {
     expect(parseCsvRows(',a,\r\nb,,')).toEqual([['', 'a', ''], ['b', '', '']]);
     expect(parseCsvRows('  \n,,\n')).toEqual([]);
+  });
+  it.each([
+    [',', 'Date,Payee,Amount\n2026-10-01,"Smith, John; Tea\tshop","1,5"'],
+    [';', 'Date;Payee;Amount\n2026-10-01;"Smith, John; Tea\tshop";1,5'],
+    ['\t', 'Date\tPayee\tAmount\n2026-10-01\t"Smith, John; Tea\tshop"\t1,5'],
+  ] as const)('splits on %j only, outside quotes', (delimiter, text) => {
+    expect(parseCsvRows(text, delimiter)).toEqual([
+      ['Date', 'Payee', 'Amount'],
+      ['2026-10-01', 'Smith, John; Tea\tshop', '1,5'],
+    ]);
+  });
+});
+
+describe('detectDelimiter', () => {
+  it.each([
+    [',', 'Date,Payee,Amount\n2026-10-01,Tea,-3.50\n2026-10-02,Cake,-4'],
+    [';', 'Datum;Text;Belopp\n01.10.2026;Kaffe;-12,50\n02.10.2026;Lön;25.000,00'],
+    ['\t', 'Date\tPayee\tAmount\n2026-10-01\tTea, black\t-3,50'],
+  ] as const)('detects %j from the header and rows', (delimiter, text) => {
+    expect(detectDelimiter(text)).toBe(delimiter);
+  });
+
+  it('ignores the other delimiters inside quoted cells', () => {
+    expect(detectDelimiter('Date,Payee,Amount\n2026-10-01,"Smith; John",-3\n2026-10-02,"a;b;c;d",-4')).toBe(',');
+    expect(detectDelimiter('Date;Payee;Amount\n2026-10-01;"Smith, John";"-3,50"')).toBe(';');
+    expect(detectDelimiter('Date\tPayee\n2026-10-01\t"x;y,z"')).toBe('\t');
+  });
+
+  it('prefers the delimiter giving more columns, then comma before semicolon and tab', () => {
+    // Every row has one comma, but more semicolons.
+    expect(detectDelimiter('a;b,c;d\n1;2,5;3')).toBe(';');
+    expect(detectDelimiter('a,b;c\n1,2;3')).toBe(',');
+  });
+
+  it('defaults to comma when no delimiter splits every row evenly', () => {
+    expect(detectDelimiter('Amount\n12\n13')).toBe(',');
+    expect(detectDelimiter('a;b\n1;2;3')).toBe(',');
+    expect(detectDelimiter('')).toBe(',');
+  });
+
+  it('only samples the first lines, and leaves out a row the sample cuts off', () => {
+    const rows = Array.from({ length: 30 }, (_, i) => `2026-10-01;Row ${i};-${i}`);
+    expect(detectDelimiter(['Date;Payee;Amount', ...rows, 'odd'].join('\n'))).toBe(';');
+    // Row 19 holds a line break in quotes, so the sample ends inside it.
+    rows[18] = '2026-10-01;"two\nlines";-1';
+    expect(detectDelimiter(['Date;Payee;Amount', ...rows].join('\n'))).toBe(';');
   });
 });
 
@@ -68,6 +114,8 @@ describe('field parsers', () => {
     ['£1,000', 1000],
     ['¥1,000.50', 1000.5],
     ['12.50 USD', 12.5],
+    ['12.50 usd', 12.5],
+    ['Sek 12', 12],
     ['1,234.56-', -1234.56],
     ['+3', 3],
     ['.5', 0.5],
@@ -83,6 +131,8 @@ describe('decimal separators', () => {
     ['1 234,56 €', 1234.56],
     ['(12,50)', -12.5],
     ['1.234', 1234],
+    ['12,50 eur', 12.5],
+    [' -1.234,56 Sek ', -1234.56],
   ])('reads %s with a decimal comma', (raw, n) => expect(parseAmount(raw, ',')).toBe(n));
   it.each(['1,234.56', '12.50', '1.23.4', '12,5,0'])('rejects %j with a decimal comma', (raw) => expect(parseAmount(raw, ',')).toBeNull());
   it.each(['12,50', '1.234,56', '1,23', '1,23,45', ',5'])('rejects %j with a decimal point', (raw) => expect(parseAmount(raw)).toBeNull());
@@ -269,6 +319,11 @@ describe('parseTransactionsCsv', () => {
     expect(reordered.transactions[0]).toMatchObject({ description: 'Tea', amount: -3, category: 'Other', accountId: 'csv-card' });
     const noHeader = parseTransactionsCsv('2026-01-02,Tea,-3,Dining,Card');
     expect(noHeader.transactions[0].id).toBe(reordered.transactions[0].id);
+  });
+
+  it.each([';', '\t'])('detects a %j delimiter', (d) => {
+    const r = parseTransactionsCsv(['date', 'description', 'amount', 'account'].join(d) + '\n' + ['31.12.2026', '"Tea;\tCake"', '-12,50 eur', 'Card'].join(d));
+    expect(r.transactions).toEqual([expect.objectContaining({ date: '2026-12-31', description: 'Tea;\tCake', amount: -12.5, accountId: 'csv-card' })]);
   });
 });
 

@@ -41,6 +41,7 @@ function normalizeMapping(v: unknown): CsvMapping | undefined {
   if (v.negate === true) out.negate = true;
   if (v.decimal === '.' || v.decimal === ',') out.decimal = v.decimal;
   if (v.dateOrder === 'MDY' || v.dateOrder === 'DMY' || v.dateOrder === 'YMD') out.dateOrder = v.dateOrder;
+  if (v.delimiter === ',' || v.delimiter === ';' || v.delimiter === '\t') out.delimiter = v.delimiter;
   return out;
 }
 
@@ -74,7 +75,7 @@ function normalizeCategories(v: unknown): Category[] {
 }
 
 function normalizeAccount(a: Account): Account {
-  return { ...a, currency: a.currency ?? 'USD', hidden: a.hidden ?? false };
+  return { ...a, currency: (typeof a.currency === 'string' && a.currency.trim().toUpperCase()) || 'USD', hidden: a.hidden ?? false };
 }
 
 function normalizeTransaction(t: Transaction, categories: Category[]): Transaction {

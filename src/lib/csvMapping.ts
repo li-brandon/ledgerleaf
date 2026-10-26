@@ -1,7 +1,9 @@
-import { ambiguousDate, contentIds, detectDateOrder, detectDecimal, parseCsvRows, readAmount, readDate, toCsv } from './csv';
-import type { CsvMapping, DateOrder, DecimalSeparator, LedgerState, Transaction } from './types';
+import {
+  ambiguousDate, contentIds, detectDateOrder, detectDecimal, detectDelimiter, parseCsvRows, readAmount, readDate, toCsv,
+} from './csv';
+import type { CsvDelimiter, CsvMapping, DateOrder, DecimalSeparator, LedgerState, Transaction } from './types';
 
-export type { CsvMapping, DateOrder, DecimalSeparator };
+export type { CsvDelimiter, CsvMapping, DateOrder, DecimalSeparator };
 
 /** A CSV file split into a header row and data rows. */
 export interface CsvTable {
@@ -42,11 +44,13 @@ export const FIELD_LABEL: Record<MappingField, string> = {
 };
 
 /**
- * Read CSV text into a table. The first row is the header unless it contains a date,
- * in which case the file has no header and columns are named "Column 1", "Column 2", ….
+ * Read CSV text into a table, splitting cells on `delimiter`, by default the detected one (see
+ * {@link detectDelimiter}); pass a mapping's `delimiter` to read the file as that mapping does.
+ * The first row is the header unless it contains a date, in which case the file has no header
+ * and columns are named "Column 1", "Column 2", ….
  */
-export function readCsvTable(text: string): CsvTable {
-  const rows = parseCsvRows(text);
+export function readCsvTable(text: string, delimiter = detectDelimiter(text)): CsvTable {
+  const rows = parseCsvRows(text, delimiter);
   const width = Math.max(0, ...rows.map((r) => r.length));
   const hasHeader = rows.length > 0 && !rows[0].some((c) => readDate(c) !== null);
   const names = hasHeader ? rows.shift()! : [];
@@ -154,7 +158,7 @@ const CURRENCY_DECIMAL: Record<string, DecimalSeparator> = {
 };
 
 export const currencyDecimal = (currency?: string): DecimalSeparator | undefined =>
-  currency ? CURRENCY_DECIMAL[currency] : undefined;
+  currency ? CURRENCY_DECIMAL[currency.trim().toUpperCase()] : undefined;
 
 /** The separator amounts are read with: the mapping's, else the file's, else none, so ambiguous amounts fail. */
 export function decimalFor(table: CsvTable, mapping: CsvMapping): DecimalSeparator | undefined {
