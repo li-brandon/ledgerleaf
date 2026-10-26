@@ -153,6 +153,13 @@ describe('errorRowsCsv', () => {
     const text = errorRowsCsv(table, [{ row: 2, cells: ['x, "y"', 'two\nlines'], reason: 'bad' }]);
     expect(text).toBe('A,B,Error\r\n"x, ""y""","two\nlines",Row 2: bad\r\n');
   });
+
+  it('defuses formulas in every cell but leaves plain negative numbers', () => {
+    const table = { headers: ['=Head', 'B', 'C'], rows: [], hasHeader: true };
+    const cells = ['=HYPERLINK("http://evil.example","x")', '@SUM(A1:A9)', '-12.50'];
+    const text = errorRowsCsv(table, [{ row: 2, cells, reason: 'bad' }]);
+    expect(text).toBe(`'=Head,B,C,Error\r\n"'=HYPERLINK(""http://evil.example"",""x"")",'@SUM(A1:A9),-12.50,Row 2: bad\r\n`);
+  });
 });
 
 describe('importing through the sync pipeline', () => {

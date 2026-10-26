@@ -1,3 +1,4 @@
+import { csvCell } from './csvExport';
 import { hashId } from './sync/hash';
 import type { Account, Transaction } from './types';
 
@@ -95,9 +96,12 @@ export function contentIds() {
   };
 }
 
-/** Serialise rows as CSV, quoting cells that contain commas, quotes or line breaks. */
+/**
+ * Serialise rows as CSV, escaping each cell with {@link csvCell}. Plain negative numbers such
+ * as "-12.50" cannot run as formulas, so they are written as-is and still re-import as amounts.
+ */
 export function toCsv(rows: string[][]): string {
-  const cell = (v: string) => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  const cell = (v: string) => (/^-\d+(\.\d+)?$/.test(v) ? v : csvCell(v));
   return rows.map((r) => r.map(cell).join(',')).join('\r\n') + '\r\n';
 }
 
