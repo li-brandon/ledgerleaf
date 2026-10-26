@@ -120,6 +120,13 @@ describe('applyMapping', () => {
     ]);
   });
 
+  it('gives each table row its transaction or error, in table-row order', () => {
+    const table = readCsvTable('Date,Description,Amount\n2026-10-01,Tea,-3\n2026-10-02,Broken,abc\n,Nodate,1\n2026-10-04,Pay,5');
+    const { transactions, errors, rows } = applyMapping(table, detectMapping(table.headers), 'acct');
+    expect(rows).toEqual([transactions[0], errors[0], errors[1], transactions[1]]);
+    expect(rows.map((r) => ('reason' in r ? r.reason : r.amount))).toEqual([-3, 'Unreadable amount "abc"', 'Missing date', 5]);
+  });
+
   it('flips Amex amounts so charges are spending and refunds are income', () => {
     const table = readCsvTable(amex);
     // Two-digit years ("10/9/26") don't show the date order, so Amex files need one chosen.
