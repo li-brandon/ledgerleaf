@@ -6,12 +6,14 @@ import {
   withImportMapping, type CsvDelimiter, type CsvMapping, type CsvTable, type DateOrder, type DecimalSeparator, type MappingField,
   type RowError,
 } from '../lib/csvMapping';
+import { batchTransactionCount, newBatchId, recordImport } from '../lib/importBatches';
 import { settingsOf } from '../lib/settings';
 import { CsvImportProvider } from '../lib/sync';
 import type { Account, AccountType } from '../lib/types';
 import type { Ledger } from '../store';
 
 const PREVIEW_ROWS = 10;
+const RECENT_BATCHES = 10;
 const MAX_BYTES = 20 * 1024 * 1024;
 const NEW = '__new__';
 
@@ -88,7 +90,7 @@ interface Props {
 
 /** Drop or pick a CSV, map its columns, choose the account and import through the CSV provider. */
 export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }: Props) {
-  const { accounts, importMappings, transactions } = ledger.state;
+  const { accounts, importMappings, transactions, importBatches = [] } = ledger.state;
   // The display currency's usual separator is offered for ambiguous amounts. Account.currency is
   // not used: CSV accounts default it to USD whatever the user's bank.
   const { currency } = settingsOf(ledger.state);
@@ -107,6 +109,8 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
   const [problem, setProblem] = useState('');
   const [importing, setImporting] = useState(false);
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [undoing, setUndoing] = useState(false);
+  const [undone, setUndone] = useState<{ text: string; error?: boolean } | null>(null);
 
   /** Use the account's saved mapping if it fits this file, otherwise detect one from the headers (read with the detected delimiter). */
   function remap(f: Loaded, accountId: string) {
@@ -224,10 +228,14 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
     const next = {
       ...mapping, decimal: mapping.decimal ?? detected, dateOrder: mapping.dateOrder ?? detectedOrder, delimiter: mapping.delimiter ?? file.detected,
     };
+    const draft = { id: newBatchId(), file: file.name, accountId, rows: table.rows.length, at: new Date().toISOString() };
     setImporting(true);
+    setUndone(null);
     onBusy(true);
     try {
-      const r = await ledger.runSync(p, (s) => withImportMapping(s, accountId, next));
+      // Every row of the file, added or matched, is tagged with the batch.
+      const fileIds = (await p.fetchTransactions()).map((t) => t.id);
+      const r = await ledger.runSync(p, (s, before) => recordImport(withImportMapping(s, accountId, next), before, draft, fileIds));
       setSummary({
         file: file.name, account: accountName, added: r.added, duplicates: r.received - r.added,
         oppositeSign: p.oppositeSign, errors: p.errors, table,
@@ -239,6 +247,21 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
     } finally {
       setImporting(false);
       onBusy(false);
+    }
+  }
+
+  async function undo(id: string, name: string) {
+    const count = batchTransactionCount(ledger.state, id);
+    if (!confirm(`Undo the import of ${name}? This removes ${count} transaction${count === 1 ? '' : 's'}.`)) return;
+    setUndoing(true);
+    setSummary(null);
+    try {
+      const removed = await ledger.undoImport(id);
+      setUndone({ text: `Undid the import of ${name}: removed ${removed} transaction${removed === 1 ? '' : 's'}.` });
+    } catch (e) {
+      setUndone({ text: e instanceof Error ? e.message : String(e), error: true });
+    } finally {
+      setUndoing(false);
     }
   }
 
@@ -287,6 +310,8 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
         </div>
       )}
 
+      {undone && <p className={`notice${undone.error ? ' error' : ''}`} role={undone.error ? 'alert' : 'status'}>{undone.text}</p>}
+
       {!file && (
         <div
           className={`dropzone${dragging ? ' over' : ''}`}
@@ -303,6 +328,29 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
         </div>
       )}
       {problem && <p className="notice error" role="alert">{problem}</p>}
+
+      {!file && importBatches.length > 0 && (
+        <div className="settings-block">
+          <h4>Recent imports</h4>
+          <ul className="ruled">
+            {importBatches.slice(0, RECENT_BATCHES).map((b) => (
+              <li key={b.id}>
+                <span>
+                  {b.file}
+                  <em>
+                    {accounts.find((a) => a.id === b.accountId)?.name ?? 'Removed account'} · {b.rows} rows, {b.added} added
+                    · {new Date(b.at).toLocaleString()}
+                  </em>
+                </span>
+                <button className="btn ghost" onClick={() => void undo(b.id, b.file)} disabled={disabled || undoing}
+                  aria-label={`Undo import of ${b.file}`}>
+                  Undo import
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {file && table && mapping && (
         <>

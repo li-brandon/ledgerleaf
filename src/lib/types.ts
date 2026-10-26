@@ -53,6 +53,13 @@ export interface Transaction {
   categoryEdited?: boolean;
   /** The user renamed the merchant by hand; rules never rename it. */
   merchantEdited?: boolean;
+  /**
+   * Ids of the CSV imports whose file contained this transaction, whether the import added it or
+   * it matched one already held, oldest first (see {@link ImportBatch}). Undoing the last of them
+   * deletes it; absent when no import claims it. A row held without claims is never claimed by a
+   * later import that matches it, so no undo deletes it.
+   */
+  importBatchIds?: string[];
 }
 
 export interface Category {
@@ -172,6 +179,41 @@ export interface RecurringSettings {
   manual: ManualRecurring[];
 }
 
+/** A balance snapshot an import wrote, with the one it replaced, so undoing the import can put it back. */
+export interface ImportSnapshot {
+  accountId: string;
+  /** ISO date, YYYY-MM-DD */
+  date: string;
+  /** The balance the import wrote (recomputed when an earlier import is undone). */
+  balance: number;
+  /**
+   * The snapshot it replaced; absent when there was none. For the earliest import that wrote
+   * this account and day, the value from before any import (handed on when an earlier one is undone).
+   */
+  before?: BalanceSnapshot;
+}
+
+/** One CSV import, recorded so it can be undone. */
+export interface ImportBatch {
+  id: string;
+  /** Name of the imported file. */
+  file: string;
+  /** Account the rows were imported into. */
+  accountId: string;
+  /** Rows in the file. */
+  rows: number;
+  /** Transactions the import added (rows matching one already held also carry the batch's id, but are not counted). */
+  added: number;
+  /** ISO timestamp of the import. */
+  at: string;
+  /** The import created the account, or was handed it when the import that did was undone. */
+  newAccount?: boolean;
+  /** Ids of categories the import created (from the file's category column), or was handed by an undone import. */
+  categories?: string[];
+  /** Balance snapshots the import wrote. */
+  snapshots?: ImportSnapshot[];
+}
+
 export const SCHEMA_VERSION = 2;
 
 export interface LedgerState {
@@ -192,6 +234,8 @@ export interface LedgerState {
   recurring?: RecurringSettings;
   /** Currency, budget month start and theme. Absent until changed; see `settingsOf` for defaults. */
   settings?: Settings;
+  /** CSV imports that can be undone, newest first. Absent until the first one. */
+  importBatches?: ImportBatch[];
 }
 
 export const CATEGORIES = [

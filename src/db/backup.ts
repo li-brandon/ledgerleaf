@@ -6,7 +6,7 @@
  */
 import { normalizeLedger } from '../lib/migrate';
 import { normalizeSettings } from '../lib/settings';
-import { SCHEMA_VERSION, type LedgerState, type RecurringSettings } from '../lib/types';
+import { SCHEMA_VERSION, type ImportBatch, type LedgerState, type RecurringSettings } from '../lib/types';
 import { MODEL_NAMES, recordId, type LedgerRecords, type ModelName } from './repository';
 
 export const BACKUP_FORMAT = 'ledgerleaf-backup';
@@ -14,7 +14,7 @@ export const BACKUP_FORMAT = 'ledgerleaf-backup';
 export const BACKUP_VERSION = 1;
 
 /** Everything in the ledger that is not a store of records. */
-export type BackupMeta = Pick<LedgerState, 'lastSync' | 'syncs' | 'importMappings' | 'recurring' | 'settings'>;
+export type BackupMeta = Pick<LedgerState, 'lastSync' | 'syncs' | 'importMappings' | 'recurring' | 'settings' | 'importBatches'>;
 
 export interface Backup {
   format: typeof BACKUP_FORMAT;
@@ -37,14 +37,14 @@ export const STORE_LABELS: Record<ModelName, string> = {
 };
 
 export function makeBackup(state: LedgerState, now = new Date()): Backup {
-  const { lastSync, syncs, importMappings, recurring, settings } = state;
+  const { lastSync, syncs, importMappings, recurring, settings, importBatches } = state;
   return {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     schemaVersion: SCHEMA_VERSION,
     exportedAt: now.toISOString(),
     stores: Object.fromEntries(MODEL_NAMES.map((n) => [n, state[n]])) as LedgerRecords,
-    meta: { lastSync, syncs, importMappings, recurring, settings },
+    meta: { lastSync, syncs, importMappings, recurring, settings, importBatches },
   };
 }
 
@@ -133,6 +133,7 @@ export function parseBackup(text: string): ParseResult {
       importMappings: isObject(meta.importMappings) ? (meta.importMappings as BackupMeta['importMappings']) : undefined,
       recurring: isObject(meta.recurring) ? (meta.recurring as unknown as RecurringSettings) : undefined,
       settings: isObject(meta.settings) ? normalizeSettings(meta.settings) : undefined,
+      importBatches: Array.isArray(meta.importBatches) ? (meta.importBatches as BackupMeta['importBatches']) : undefined,
     },
   };
   return { ok: true, backup, counts: storeCounts(backup.stores) };
@@ -151,6 +152,12 @@ function mergeRecurring(a?: RecurringSettings, b?: RecurringSettings): Recurring
   return { decisions: { ...b.decisions, ...a.decisions }, manual: [...a.manual, ...b.manual.filter((m) => !ids.has(m.id))] };
 }
 
+/** `a` followed by the batches of `b` it lacks, newest first. */
+function mergeBatches(a: ImportBatch[] = [], b: ImportBatch[] = []): ImportBatch[] {
+  const ids = new Set(a.map((x) => x.id));
+  return [...a, ...b.filter((x) => !ids.has(x.id))].sort((x, y) => y.at.localeCompare(x.at));
+}
+
 export interface RestoreResult {
   state: LedgerState;
   /** Records taken from the backup, per store (in merge mode, those whose key was new). */
@@ -161,7 +168,9 @@ export interface RestoreResult {
  * The ledger after restoring `backup`. `replace` makes it exactly the backup (settings too).
  * `merge` keeps everything in `current` and adds backup records whose key (id; account and
  * day for balance history) it lacks; where both have something, `current` wins, settings
- * included. Either way the result is normalized like a freshly loaded ledger.
+ * included. A transaction in both keeps `current`'s record, `importBatchIds` too: claims are not
+ * unioned, so undoing a backup's batch never deletes a row `current` did not attribute to it.
+ * Either way the result is normalized like a freshly loaded ledger.
  */
 export function restoreBackup(current: LedgerState, backup: Backup, mode: RestoreMode): RestoreResult {
   const { stores, meta } = backup;
@@ -180,6 +189,7 @@ export function restoreBackup(current: LedgerState, backup: Backup, mode: Restor
     importMappings: { ...meta.importMappings, ...current.importMappings },
     recurring: mergeRecurring(current.recurring, meta.recurring),
     settings: current.settings ?? meta.settings,
+    importBatches: mergeBatches(current.importBatches, meta.importBatches),
   });
   return { state, added };
 }
