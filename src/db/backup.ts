@@ -168,7 +168,9 @@ export interface RestoreResult {
  * The ledger after restoring `backup`. `replace` makes it exactly the backup (settings too).
  * `merge` keeps everything in `current` and adds backup records whose key (id; account and
  * day for balance history) it lacks; where both have something, `current` wins, settings
- * included. Either way the result is normalized like a freshly loaded ledger.
+ * included. A transaction in both keeps `current`'s record, `importBatchIds` too: claims are not
+ * unioned, so undoing a backup's batch never deletes a row `current` did not attribute to it.
+ * Either way the result is normalized like a freshly loaded ledger.
  */
 export function restoreBackup(current: LedgerState, backup: Backup, mode: RestoreMode): RestoreResult {
   const { stores, meta } = backup;

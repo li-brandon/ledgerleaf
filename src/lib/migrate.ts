@@ -98,7 +98,9 @@ function normalizeTransaction(t: Transaction, categories: Category[]): Transacti
   if (out.categoryEdited !== true) delete out.categoryEdited;
   if (out.merchantEdited !== true) delete out.merchantEdited;
   if (typeof out.pending !== 'boolean') delete out.pending;
-  if (typeof out.importBatchId !== 'string') delete out.importBatchId;
+  const batchIds = Array.isArray(t.importBatchIds) ? t.importBatchIds.filter((id) => typeof id === 'string' && id) : [];
+  if (batchIds.length) out.importBatchIds = batchIds;
+  else delete out.importBatchIds;
   const source = t.source ?? sourceFromId(t.id);
   if (source) out.source = source;
   return out;

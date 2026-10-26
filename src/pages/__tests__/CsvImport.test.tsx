@@ -560,7 +560,61 @@ describe('undo import', () => {
       expect(after.balanceSnapshots).toEqual(before.balanceSnapshots);
       expect(after.categories).toEqual(before.categories);
       expect(after.importBatches).toBeUndefined();
+      expect(after.transactions.some((t) => t.importBatchIds)).toBe(false);
     });
     expect(await groceriesSpent(user)).toBe('$130.00');
+  });
+
+  /** Import `text` as `name` into the account named "bank" (created by the first import). */
+  async function importInto(user: ReturnType<typeof userEvent.setup>, text: string, name: string, rows: number) {
+    await user.upload(fileInput(), csvFile(text, name));
+    const ui = within(card());
+    if (ui.queryByRole('option', { name: 'bank' })) await user.selectOptions(ui.getByLabelText('Account'), 'bank');
+    await user.click(await ui.findByRole('button', { name: `Import ${rows} rows` }));
+    await ui.findByText(`${name}`, { selector: 'li > span' });
+  }
+
+  it('keeps a row a later file also had when the earlier import is undone', async () => {
+    const user = userEvent.setup();
+    await renderApp(emptyLedger(), '#/connections');
+    await importInto(user, BANK_CSV, 'bank.csv', 3);
+    await importInto(user, 'Date,Description,Amount\n10/13/2026,Corner Grocer,-42.10\n10/15/2026,Bakery,-6.50', 'more.csv', 2);
+
+    const ui = within(card());
+    expect(ui.getByText('more.csv', { selector: 'li > span' })).toHaveTextContent('2 rows, 1 added');
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await user.click(ui.getByRole('button', { name: 'Undo import of bank.csv' }));
+    expect(confirm).toHaveBeenCalledWith('Undo the import of bank.csv? This removes 2 transactions.');
+    expect(await ui.findByRole('status')).toHaveTextContent('Undid the import of bank.csv: removed 2 transactions.');
+    await waitFor(async () => expect((await stored()).transactions.map((t) => t.description).sort()).toEqual(['Bakery', 'Corner Grocer']));
+
+    await user.click(ui.getByRole('button', { name: 'Undo import of more.csv' }));
+    expect(confirm).toHaveBeenLastCalledWith('Undo the import of more.csv? This removes 2 transactions.');
+    await waitFor(async () => {
+      const after = await stored();
+      expect(after.transactions).toEqual([]);
+      expect(after.accounts).toEqual([]);
+      expect(after.importBatches).toBeUndefined();
+    });
+  });
+
+  it('changes nothing and says so when the undo cannot be saved', async () => {
+    const user = userEvent.setup();
+    await renderApp(await csvLedger('date,description,amount\n2026-10-05,Tea,-3'), '#/connections');
+    await importInto(user, BANK_CSV, 'bank.csv', 3);
+    const ui = within(card());
+    await waitFor(async () => expect((await stored()).importBatches).toHaveLength(1));
+    const before = await stored();
+
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(IDBObjectStore.prototype, 'delete').mockImplementationOnce(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+    await user.click(ui.getByRole('button', { name: 'Undo import of bank.csv' }));
+    expect(await ui.findByRole('alert')).toHaveTextContent('The import could not be undone; nothing was changed.');
+    expect(ui.getByRole('button', { name: 'Undo import of bank.csv' })).toBeEnabled();
+    expect(await stored()).toEqual(before);
+    // The ledger on screen still holds the import.
+    expect(screen.getByText(/2 accounts, 4 transactions/)).toBeInTheDocument();
   });
 });

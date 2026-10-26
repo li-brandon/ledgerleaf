@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultCategories } from '../categories';
-import { DEFAULT_BUDGETS, migrate, migrateV1, type LedgerStateV1 } from '../migrate';
+import { DEFAULT_BUDGETS, migrate, migrateV1, normalizeLedger, type LedgerStateV1 } from '../migrate';
 import { SCHEMA_VERSION } from '../types';
 
 const MONTH = '2026-10';
@@ -212,5 +212,16 @@ describe('migrate', () => {
     const copy = JSON.parse(JSON.stringify(v1));
     migrate(v1, MONTH);
     expect(v1).toEqual(copy);
+  });
+});
+
+describe('normalizeLedger import batch ids', () => {
+  it('keeps the strings of a list and drops anything else', () => {
+    const tx = (importBatchIds: unknown) => ({ id: 'csv-1', date: '2026-10-01', amount: -1, description: 'x', accountId: 'a', category: 'Other', importBatchIds });
+    const ids = (v: unknown) => normalizeLedger({ transactions: [tx(v) as never] }).transactions[0];
+    expect(ids(['imp-a', 3, '', null, 'imp-b']).importBatchIds).toEqual(['imp-a', 'imp-b']);
+    expect(ids([])).not.toHaveProperty('importBatchIds');
+    expect(ids(['', 1])).not.toHaveProperty('importBatchIds');
+    expect(ids('imp-a')).not.toHaveProperty('importBatchIds');
   });
 });

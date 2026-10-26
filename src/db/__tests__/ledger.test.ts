@@ -90,13 +90,13 @@ describe.each(ADAPTERS)('ledger on %s', (_, open) => {
     };
     const next: LedgerState = {
       ...prev,
-      transactions: prev.transactions.map((t, i) => (i < 2 ? { ...t, importBatchId: 'imp-1' } : t)),
+      transactions: prev.transactions.map((t, i) => (i < 2 ? { ...t, importBatchIds: ['imp-1'] } : t)),
       importBatches: [batch],
     };
     await saveLedger(repo, next, prev);
     const loaded = (await readLedger(repo))!;
     expect(loaded.importBatches).toEqual([batch]);
-    expect(loaded.transactions.filter((t) => t.importBatchId === 'imp-1').map((t) => t.id)).toEqual([next.transactions[0].id, next.transactions[1].id]);
+    expect(loaded.transactions.filter((t) => t.importBatchIds?.includes('imp-1')).map((t) => t.id)).toEqual([next.transactions[0].id, next.transactions[1].id]);
 
     await saveLedger(repo, { ...next, importBatches: undefined }, next);
     expect((await readLedger(repo))!.importBatches).toBeUndefined();

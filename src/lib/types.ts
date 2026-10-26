@@ -53,8 +53,12 @@ export interface Transaction {
   categoryEdited?: boolean;
   /** The user renamed the merchant by hand; rules never rename it. */
   merchantEdited?: boolean;
-  /** Id of the CSV import that added this transaction (see {@link ImportBatch}); absent for any other source. */
-  importBatchId?: string;
+  /**
+   * Ids of the CSV imports whose file contained this transaction, whether the import added it or
+   * it matched one already held, oldest first (see {@link ImportBatch}). Undoing the last of them
+   * deletes it; absent when no import claims it.
+   */
+  importBatchIds?: string[];
 }
 
 export interface Category {
@@ -179,9 +183,12 @@ export interface ImportSnapshot {
   accountId: string;
   /** ISO date, YYYY-MM-DD */
   date: string;
-  /** The balance the import wrote. */
+  /** The balance the import wrote (recomputed when an earlier import is undone). */
   balance: number;
-  /** The snapshot it replaced; absent when there was none. */
+  /**
+   * The snapshot it replaced; absent when there was none. For the earliest import that wrote
+   * this account and day, the value from before any import (handed on when an earlier one is undone).
+   */
   before?: BalanceSnapshot;
 }
 
@@ -194,13 +201,13 @@ export interface ImportBatch {
   accountId: string;
   /** Rows in the file. */
   rows: number;
-  /** Transactions the import added; only these carry the batch's id. */
+  /** Transactions the import added (rows matching one already held also carry the batch's id, but are not counted). */
   added: number;
   /** ISO timestamp of the import. */
   at: string;
-  /** The import created the account. */
+  /** The import created the account, or was handed it when the import that did was undone. */
   newAccount?: boolean;
-  /** Ids of categories the import created (from the file's category column). */
+  /** Ids of categories the import created (from the file's category column), or was handed by an undone import. */
   categories?: string[];
   /** Balance snapshots the import wrote. */
   snapshots?: ImportSnapshot[];

@@ -139,7 +139,7 @@ describe('restoreBackup', () => {
     const batch = (id: string, at: string) => ({ id, file: `${id}.csv`, accountId: 'acc-1', rows: 1, added: 1, at });
     const withBatches: LedgerState = {
       ...sample(),
-      transactions: sample().transactions.map((t, i) => (i === 0 ? { ...t, importBatchId: 'imp-b' } : t)),
+      transactions: sample().transactions.map((t, i) => (i === 0 ? { ...t, importBatchIds: ['imp-a', 'imp-b'] } : t)),
       importBatches: [batch('imp-b', '2026-10-19T00:00:00.000Z'), batch('imp-a', '2026-10-01T00:00:00.000Z')],
     };
     const { backup: b } = roundTrip(withBatches) as { backup: Backup };
@@ -148,7 +148,12 @@ describe('restoreBackup', () => {
     const current = { ...emptyLedger(MONTH), importBatches: [batch('imp-c', '2026-10-10T00:00:00.000Z'), batch('imp-a', '2026-10-01T00:00:00.000Z')] };
     const merged = restoreBackup(current, b, 'merge').state;
     expect(merged.importBatches?.map((x) => x.id)).toEqual(['imp-b', 'imp-c', 'imp-a']);
-    expect(merged.transactions.find((t) => t.id === 'tx-0')?.importBatchId).toBe('imp-b');
+    expect(merged.transactions.find((t) => t.id === 'tx-0')?.importBatchIds).toEqual(['imp-a', 'imp-b']);
+
+    // A transaction in both keeps the current ledger's claims; they are not unioned with the backup's.
+    const tx0 = { ...b.stores.transactions[0], importBatchIds: ['imp-c'] };
+    const both = restoreBackup({ ...current, transactions: [tx0] }, b, 'merge').state;
+    expect(both.transactions.find((t) => t.id === 'tx-0')?.importBatchIds).toEqual(['imp-c']);
   });
 
   it('merge takes the backup settings when the ledger has none', () => {

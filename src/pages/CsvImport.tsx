@@ -233,7 +233,9 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
     setUndone(null);
     onBusy(true);
     try {
-      const r = await ledger.runSync(p, (s, before) => recordImport(withImportMapping(s, accountId, next), before, draft));
+      // Every row of the file, added or matched, is tagged with the batch.
+      const fileIds = (await p.fetchTransactions()).map((t) => t.id);
+      const r = await ledger.runSync(p, (s, before) => recordImport(withImportMapping(s, accountId, next), before, draft, fileIds));
       setSummary({
         file: file.name, account: accountName, added: r.added, duplicates: r.received - r.added,
         oppositeSign: p.oppositeSign, errors: p.errors, table,
