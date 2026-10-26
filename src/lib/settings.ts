@@ -35,16 +35,20 @@ export function isCurrency(code: unknown): code is string {
   }
 }
 
+/** A currency code as stored: trimmed and upper-cased (" Sek " is SEK). Non-strings pass through. */
+const currencyCode = (v: unknown) => (typeof v === 'string' ? v.trim().toUpperCase() : v);
+
 export const isStartDay = (n: unknown): n is number =>
   typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= MAX_START_DAY;
 
 export const isTheme = (v: unknown): v is Theme => THEMES.includes(v as Theme);
 
-/** Stored or imported settings with anything missing or invalid replaced by the default. */
+/** Stored or imported settings with anything missing or invalid replaced by the default. Currency codes are upper-cased. */
 export function normalizeSettings(v: unknown): Settings {
   const s = isObject(v) ? v : {};
+  const currency = currencyCode(s.currency);
   return {
-    currency: isCurrency(s.currency) ? s.currency : DEFAULT_SETTINGS.currency,
+    currency: isCurrency(currency) ? currency : DEFAULT_SETTINGS.currency,
     monthStartDay: isStartDay(s.monthStartDay) ? s.monthStartDay : DEFAULT_SETTINGS.monthStartDay,
     theme: isTheme(s.theme) ? s.theme : DEFAULT_SETTINGS.theme,
   };
@@ -56,7 +60,7 @@ export const settingsOf = (state: { settings?: Partial<Settings> }) => normalize
 /** Apply a change, ignoring invalid values. */
 export function updateSettings(current: Settings, patch: Partial<Settings>): Settings {
   return normalizeSettings({ ...current, ...Object.fromEntries(Object.entries(patch).filter(([k, v]) =>
-    (k === 'currency' && isCurrency(v)) || (k === 'monthStartDay' && isStartDay(v)) || (k === 'theme' && isTheme(v)))) });
+    (k === 'currency' && isCurrency(currencyCode(v))) || (k === 'monthStartDay' && isStartDay(v)) || (k === 'theme' && isTheme(v)))) });
 }
 
 /** The theme to draw with: "system" follows the OS preference. */

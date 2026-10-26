@@ -13,10 +13,15 @@ describe('normalizeSettings', () => {
   it('keeps valid values and replaces invalid ones field by field', () => {
     expect(normalizeSettings({ currency: 'EUR', monthStartDay: 15, theme: 'dark' }))
       .toEqual({ currency: 'EUR', monthStartDay: 15, theme: 'dark' });
-    expect(normalizeSettings({ currency: 'eur', monthStartDay: 31, theme: 'neon' })).toEqual(DEFAULT_SETTINGS);
+    expect(normalizeSettings({ currency: 'euro', monthStartDay: 31, theme: 'neon' })).toEqual(DEFAULT_SETTINGS);
     expect(normalizeSettings({ currency: 'XYZW', monthStartDay: 2.5 })).toEqual(DEFAULT_SETTINGS);
     expect(normalizeSettings({ monthStartDay: 28 }).monthStartDay).toBe(28);
     expect(normalizeSettings({ monthStartDay: 0 }).monthStartDay).toBe(1);
+  });
+
+  it('trims and upper-cases the currency code', () => {
+    expect(normalizeSettings({ currency: 'eur' }).currency).toBe('EUR');
+    expect(normalizeSettings({ currency: ' Sek ' }).currency).toBe('SEK');
   });
 
   it('reads defaults from a ledger that never saved settings', () => {
@@ -35,6 +40,10 @@ describe('updateSettings', () => {
 
   it('applies valid changes', () => {
     expect(updateSettings(current, { theme: 'dark', monthStartDay: 1 })).toEqual({ currency: 'CAD', monthStartDay: 1, theme: 'dark' });
+  });
+
+  it('trims and upper-cases a new currency code', () => {
+    expect(updateSettings(current, { currency: ' Sek ' }).currency).toBe('SEK');
   });
 
   it('keeps the current value instead of an invalid one', () => {

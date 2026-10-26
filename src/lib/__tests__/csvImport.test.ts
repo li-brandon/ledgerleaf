@@ -33,6 +33,25 @@ describe('readCsvTable', () => {
     expect(readCsvTable(`${date},Tea,-3`)).toMatchObject({ headers: ['Column 1', 'Column 2', 'Column 3'], hasHeader: false });
   });
 
+  it.each([
+    [',', 'Date,Payee,Amount\n2026-10-01,"Smith; John",-3.50\n2026-10-02,"Pay, October",2000'],
+    [';', 'Date;Payee;Amount\n2026-10-01;"Smith; John";-3,50\n2026-10-02;"Pay, October";2000'],
+    ['\t', 'Date\tPayee\tAmount\n2026-10-01\t"Smith; John"\t-3,50\n2026-10-02\t"Pay, October"\t2000'],
+  ] as const)('detects a %j delimiter and keeps it inside quoted cells', (delimiter, text) => {
+    const t = readCsvTable(text);
+    expect(t.headers).toEqual(['Date', 'Payee', 'Amount']);
+    expect(t.rows.map((r) => r[1])).toEqual(['Smith; John', 'Pay, October']);
+    expect(readCsvTable(text, delimiter)).toEqual(t);
+    expect(applyMapping(t, detectMapping(t.headers), 'acct').transactions.map((x) => [x.description, x.amount]))
+      .toEqual([['Smith; John', -3.5], ['Pay, October', 2000]]);
+  });
+
+  it('reads with a given delimiter instead of the detected one', () => {
+    const text = 'Date;Payee,Amount\n2026-10-01;Tea,-3';
+    expect(readCsvTable(text).headers).toEqual(['Date;Payee', 'Amount']);
+    expect(readCsvTable(text, ';').headers).toEqual(['Date', 'Payee,Amount']);
+  });
+
   it('names columns when the file has no header row', () => {
     const t = readCsvTable('2026-01-01,Tea,-3\n2026-01-02,Cake,-4,extra');
     expect(t.hasHeader).toBe(false);
@@ -211,6 +230,24 @@ describe('applyMapping', () => {
     expect(currencyDecimal('USD')).toBe('.');
     expect(currencyDecimal('EUR')).toBe(',');
     expect(currencyDecimal('CHF')).toBeUndefined();
+    expect(currencyDecimal(' eur ')).toBe(',');
+    expect(currencyDecimal('Usd')).toBe('.');
+  });
+
+  it('reads the file with the mapping\'s delimiter, else the detected one, in the provider as in the preview', async () => {
+    const csv = 'Date;Payee;Amount\n2026-10-01;"Smith; John";-3,50\n2026-10-02;Pay;"1.234,00"';
+    for (const delimiter of [undefined, ';'] as const) {
+      const table = readCsvTable(csv, delimiter);
+      const mapping = { ...detectMapping(table.headers), delimiter };
+      const preview = applyMapping(table, mapping, 'acct');
+      expect(preview.transactions.map((t) => t.amount)).toEqual([-3.5, 1234]);
+      const p = new CsvImportProvider(csv, { mapping, accountId: 'acct' });
+      expect(await p.fetchTransactions()).toEqual(preview.transactions);
+      expect(p.table).toEqual(table);
+    }
+    // A mapping saved for the semicolon file does not fit it read with commas.
+    const p = new CsvImportProvider(csv, { mapping: { date: 'Date', description: 'Payee', amount: 'Amount', delimiter: ',' }, accountId: 'acct' });
+    expect(() => p.errors).toThrow('Choose the column that holds the date.');
   });
 
   it('detects day-first dotted dates from the rows and reads every date with that order', () => {

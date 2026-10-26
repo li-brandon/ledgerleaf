@@ -1,12 +1,13 @@
 import { csvCell } from './csvExport';
 import { hashId } from './sync/hash';
-import type { Account, DateOrder, DecimalSeparator, Transaction } from './types';
+import type { Account, CsvDelimiter, DateOrder, DecimalSeparator, Transaction } from './types';
 
 /**
- * Split CSV text into rows of cells. Handles quoted fields, escaped quotes and CRLF. A quote
- * only opens a quoted field at the start of a cell; elsewhere (`12" PIZZA`) it is literal.
+ * Split CSV text into rows of cells, separated by `delimiter`. Handles quoted fields, escaped
+ * quotes and CRLF; a delimiter inside quotes is part of the cell. A quote only opens a quoted
+ * field at the start of a cell; elsewhere (`12" PIZZA`) it is literal.
  */
-export function parseCsvRows(text: string): string[][] {
+export function parseCsvRows(text: string, delimiter: CsvDelimiter = ','): string[][] {
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
   const rows: string[][] = [];
   let row: string[] = [];
@@ -21,7 +22,7 @@ export function parseCsvRows(text: string): string[][] {
       else if (c === '"') quoted = false;
       else cell += c;
     } else if (c === '"' && !started) quoted = started = true;
-    else if (c === ',') { row.push(cell); cell = ''; started = false; }
+    else if (c === delimiter) { row.push(cell); cell = ''; started = false; }
     else if (c === '\n' || c === '\r') {
       if (c === '\r' && text[i + 1] === '\n') i++;
       row.push(cell); rows.push(row); row = []; cell = ''; started = false;
@@ -29,6 +30,34 @@ export function parseCsvRows(text: string): string[][] {
   }
   if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
   return rows.filter((r) => r.some((x) => x.trim() !== ''));
+}
+
+/** Delimiters {@link detectDelimiter} chooses from, in the order ties go. */
+export const DELIMITERS: readonly CsvDelimiter[] = [',', ';', '\t'];
+
+/** Lines of a file {@link detectDelimiter} looks at. */
+const SAMPLE_LINES = 20;
+
+/**
+ * The delimiter a file's cells are separated by: the one that splits the header and the next
+ * rows (up to {@link SAMPLE_LINES} lines) into the same number of cells, more than one, on every
+ * row. Delimiters inside quotes don't count, and ones that only appear in some cells (12,50 in a
+ * semicolon file) give uneven rows. If several fit, the one giving the most columns wins, then
+ * the first of {@link DELIMITERS}. Comma when none fits, as in a single-column file.
+ */
+export function detectDelimiter(text: string): CsvDelimiter {
+  const lines = text.split(/\r\n|\n|\r/, SAMPLE_LINES + 1);
+  const sample = lines.slice(0, SAMPLE_LINES).join('\n');
+  let best: CsvDelimiter = ',';
+  let width = 1;
+  for (const d of DELIMITERS) {
+    const rows = parseCsvRows(sample, d);
+    // Cut off by the end of the sample, the last row may lack cells (a quoted line break).
+    if (lines.length > SAMPLE_LINES && rows.length > 1) rows.pop();
+    const n = rows[0]?.length ?? 0;
+    if (n > width && rows.every((r) => r.length === n)) { best = d; width = n; }
+  }
+  return best;
 }
 
 const MONTHS = [
@@ -126,13 +155,13 @@ const AMOUNT = {
 };
 
 /**
- * Parses "$1,234.50", "-12", "(45.00)", "-$5", "€12.00", "1,234.56-", "12.00 USD" and
+ * Parses "$1,234.50", "-12", "(45.00)", "-$5", "€12.00", "1,234.56-", "12.00 USD" (or "usd") and
  * "1,23,456.78", or with `decimal` ",": "1.234,56", "1 234,56" and "12,50". Thousands must be
  * grouped as {@link AMOUNT} allows. Rounds to cents. Returns null if not numeric.
  */
 export function parseAmount(raw: string, decimal: DecimalSeparator = '.'): number | null {
   // Whitespace between two digits can only group thousands; elsewhere it is dropped.
-  let s = raw.replace(MINUS, '-').replace(/\b[A-Z]{3}\b|[$€£¥]/g, '').replace(/(?<!\d)\s+|\s+(?!\d)/g, '').replace(/\s/g, ' ');
+  let s = raw.replace(MINUS, '-').replace(/\b[a-z]{3}\b|[$€£¥]/gi, '').replace(/(?<!\d)\s+|\s+(?!\d)/g, '').replace(/\s/g, ' ');
   let neg = false;
   if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
   if (/^[^-+]*-$/.test(s)) { neg = !neg; s = s.slice(0, -1); }
@@ -205,13 +234,13 @@ const COLUMNS = ['date', 'description', 'amount', 'category', 'account'] as cons
 
 /**
  * Parse CSV with columns date,description,amount,category,account (header optional,
- * header order respected). The decimal separator is detected from the amounts and the date
- * order from the dates; rows whose amount or date stays ambiguous are skipped (see
- * {@link readAmount} and {@link readDate}). Ids hash the row content plus its occurrence index, so
+ * header order respected). The delimiter is detected (see {@link detectDelimiter}), the decimal
+ * separator from the amounts and the date order from the dates; rows whose amount or date stays
+ * ambiguous are skipped (see {@link readAmount} and {@link readDate}). Ids hash the row content plus its occurrence index, so
  * re-importing the same file dedupes while genuine same-day repeats are kept.
  */
 export function parseTransactionsCsv(text: string): CsvParseResult {
-  const rows = parseCsvRows(text);
+  const rows = parseCsvRows(text, detectDelimiter(text));
   let idx: Record<(typeof COLUMNS)[number], number> = { date: 0, description: 1, amount: 2, category: 3, account: 4 };
   if (rows[0] && rows[0].map((h) => h.trim().toLowerCase()).includes('date')) {
     const header = rows.shift()!.map((h) => h.trim().toLowerCase());
