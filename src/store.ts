@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { requestPersistenceOnce } from './browser';
 import {
   DB_NAME, createPersister, demoCounts, loadLedger, openRepository, readLedger, withoutDemo, type OpenOptions,
   type Persister, type Repository, type SaveStatus,
@@ -148,7 +149,8 @@ export function useLedger(open: (options: OpenOptions) => Promise<Repository> = 
    * written to storage before the ledger updates. Any failure throws a {@link SyncError}
    * and leaves both the stored and in-memory ledger untouched. `also` makes further changes
    * to the synced ledger that are saved in the same write, e.g. remembering a CSV mapping; it
-   * also gets the ledger the sync was merged into.
+   * also gets the ledger the sync was merged into. The first sync of a session that adds real
+   * data also asks the browser to make storage persistent.
    */
   const runSync = useCallback(async (
     provider: SyncProvider, also: (s: LedgerState, before: LedgerState) => LedgerState = (s) => s,
@@ -171,6 +173,8 @@ export function useLedger(open: (options: OpenOptions) => Promise<Repository> = 
     latest.current = merge(latest.current);
     setState(merge);
     const { added, updated, removed, received } = outcome;
+    // Real data is now stored: ask the browser not to evict it (sample data is not worth a prompt).
+    if (added && provider.kind !== 'demo') requestPersistenceOnce();
     return { added, updated, removed, received };
   }, []);
 

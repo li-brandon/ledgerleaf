@@ -1,5 +1,7 @@
-import { useRef, useState, type ChangeEvent } from 'react';
-import { downloadFile, rememberedTxFilters } from '../browser';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import {
+  downloadFile, persistenceStatus, rememberedTxFilters, requestPersistence, type StoragePersistence,
+} from '../browser';
 import { demoCounts } from '../db';
 import {
   STORE_LABELS, backupFilename, csvFilename, makeBackup, parseBackup, type Backup, type RestoreMode, type StoreCounts,
@@ -15,6 +17,12 @@ import {
 import { EMPTY_FILTERS, activeFilterCount, applyFilters, filtersHref, hasFilters } from '../lib/txFilters';
 import type { Ledger } from '../store';
 
+
+const PERSISTENCE_TEXT: Record<StoragePersistence, string> = {
+  persistent: "Persistent — the browser won't clear this data under storage pressure.",
+  'best-effort': 'Best effort — the browser may clear this data when space runs low.',
+  unsupported: 'Not supported by this browser.',
+};
 
 const START_DAYS = Array.from({ length: MAX_START_DAY }, (_, i) => i + 1);
 
@@ -35,7 +43,16 @@ export default function Settings({ ledger }: { ledger: Ledger }) {
   const [pending, setPending] = useState<Pending>();
   const [mode, setMode] = useState<RestoreMode>('merge');
   const [resetText, setResetText] = useState('');
+  const [storage, setStorage] = useState<StoragePersistence>();
+  const [storageDenied, setStorageDenied] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    void persistenceStatus().then((s) => mounted.current && setStorage(s));
+    return () => { mounted.current = false; };
+  }, []);
 
   const { accounts, transactions, budgets, categories, rules, lastSync } = ledger.state;
   const settings = settingsOf(ledger.state);
@@ -98,6 +115,13 @@ export default function Settings({ ledger }: { ledger: Ledger }) {
     say(mode === 'replace' ? `Restored ${pending.name}: ${countsText(added)}.` : `Merged ${pending.name}: added ${countsText(added)}.`);
   });
 
+  async function persistStorage() {
+    const s = await requestPersistence();
+    if (!mounted.current) return;
+    setStorage(s);
+    setStorageDenied(s !== 'persistent');
+  }
+
   const reset = () => run(async () => {
     await ledger.reset();
     setResetText('');
@@ -150,6 +174,17 @@ export default function Settings({ ledger }: { ledger: Ledger }) {
           <li><span>Last sync</span><b>{lastSync ? new Date(lastSync).toLocaleString() : 'Never'}</b></li>
         </ul>
         <p className="muted">Everything lives in this browser's IndexedDB. Exports and restores happen on this device; nothing is sent to a server.</p>
+
+        <div className="settings-block">
+          <h4>Storage</h4>
+          {storage && <p>{PERSISTENCE_TEXT[storage]}</p>}
+          {storage === 'best-effort' && (
+            <>
+              <button className="btn ghost" onClick={() => void persistStorage()}>Request persistent storage</button>
+              {storageDenied && <p className="muted" role="status">The browser declined; it may allow it later, e.g. once you use the app more.</p>}
+            </>
+          )}
+        </div>
 
         <div className="settings-block">
           <h4>Export transactions (CSV)</h4>
