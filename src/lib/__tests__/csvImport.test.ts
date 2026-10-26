@@ -164,6 +164,34 @@ describe('applyMapping', () => {
     expect(transactions.map((t) => t.amount)).toEqual([0.2, 1500, -0.13]);
   });
 
+  it('falls back to the currency\'s usual separator when the rows do not show one', () => {
+    const table = readCsvTable('Date,Description,Amount\n2026-10-01,Rent,"-1,500"\n2026-10-02,Pay,"3,200"');
+    const m = detectMapping(table.headers);
+    const amounts = (currency?: string) => applyMapping(table, m, 'acct', currency).transactions.map((t) => t.amount);
+    expect(amounts('USD')).toEqual([-1500, 3200]);
+    expect(amounts('EUR')).toEqual([-1.5, 3.2]);
+    expect(amounts('CHF')).toEqual([]);
+    expect(amounts()).toEqual([]);
+    expect(applyMapping(table, m, 'acct', 'CHF').errors.map((e) => e.reason)).toEqual([
+      'Ambiguous amount "-1,500": choose the decimal separator', 'Ambiguous amount "3,200": choose the decimal separator',
+    ]);
+    expect(applyMapping(table, { ...m, decimal: ',' }, 'acct', 'USD').transactions.map((t) => t.amount)).toEqual([-1.5, 3.2]);
+
+    const yen = readCsvTable('Date,Description,Amount\n2026-10-01,Ramen,"¥1,000"');
+    expect(applyMapping(yen, detectMapping(yen.headers), 'acct', 'JPY').transactions.map((t) => t.amount)).toEqual([1000]);
+  });
+
+  it('prefers the separator the rows show over the currency\'s', () => {
+    const table = readCsvTable('Date,Description,Amount\n2026-10-01,Tea,"12,50"\n2026-10-02,Cake,"1,234"');
+    expect(applyMapping(table, detectMapping(table.headers), 'acct', 'USD').transactions.map((t) => t.amount)).toEqual([12.5, 1.23]);
+  });
+
+  it('passes the currency through the CSV provider', async () => {
+    const csv = 'Date,Description,Amount\n2026-10-01,Rent,"-1,500"';
+    const options: CsvImportOptions = { mapping: { date: 'Date', description: 'Description', amount: 'Amount' }, accountId: 'acct', currency: 'USD' };
+    expect((await new CsvImportProvider(csv, options).fetchTransactions()).map((t) => t.amount)).toEqual([-1500]);
+  });
+
   it('refuses a mapping that does not fit the file', () => {
     expect(() => applyMapping(readCsvTable(chase), { date: 'Nope', description: 'Description', amount: 'Amount' }, 'a')).toThrow(/date/);
   });

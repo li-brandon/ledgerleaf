@@ -84,7 +84,24 @@ describe('decimal separators', () => {
     ['1.234', 1234],
   ])('reads %s with a decimal comma', (raw, n) => expect(parseAmount(raw, ',')).toBe(n));
   it.each(['1,234.56', '12.50', '1.23.4', '12,5,0'])('rejects %j with a decimal comma', (raw) => expect(parseAmount(raw, ',')).toBeNull());
-  it.each(['12,50', '1.234,56', '1,23', '12,34,567', ',5'])('rejects %j with a decimal point', (raw) => expect(parseAmount(raw)).toBeNull());
+  it.each(['12,50', '1.234,56', '1,23', '1,23,45', ',5'])('rejects %j with a decimal point', (raw) => expect(parseAmount(raw)).toBeNull());
+
+  it('reads Indian lakh grouping with a decimal point', () => {
+    expect(parseAmount('1,23,456.78')).toBe(123456.78);
+    expect(parseAmount('-12,34,567')).toBe(-1234567);
+    expect(readAmount('1,23,456.78')).toBe(123456.78);
+    for (const raw of ['01,23,456', '1,2,345', '1,23,4567', '1.23.456,78']) expect(readAmount(raw)).toBeNull();
+  });
+
+  it('accepts spaces grouping thousands in threes but rejects inconsistent or mixed grouping', () => {
+    expect(parseAmount('1 234,56', ',')).toBe(1234.56);
+    expect(parseAmount('1 234 567,8', ',')).toBe(1234567.8);
+    expect(parseAmount('-1 234,56 SEK', ',')).toBe(-1234.56);
+    expect(parseAmount('SEK 12,50', ',')).toBe(12.5);
+    expect(parseAmount('12.00 USD')).toBe(12);
+    expect(parseAmount('- $ 5')).toBe(-5);
+    for (const raw of ['12 34,56', '1 234.567,89', '1 2345', '1,234 567.00']) expect(readAmount(raw)).toBeNull();
+  });
 
   it.each([
     ['−12.50', -12.5], ['–12.50', -12.5], ['‒12.50', -12.5], ['﹣12.50', -12.5], ['－12.50', -12.5], ['12.50−', -12.5],

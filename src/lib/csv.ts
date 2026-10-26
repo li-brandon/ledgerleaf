@@ -67,23 +67,29 @@ function fmt(y: number, mo: number, d: number): string | null {
 /** Minus signs and dashes banks and spreadsheets write in place of "-": hyphens, figure/en/em dashes, U+2212, small and fullwidth hyphen-minus. */
 const MINUS = /[‐-―−﹘﹣－]/g;
 
+/**
+ * A number written with each decimal separator. Thousands are grouped in threes by one kind
+ * of separator throughout: the other of "." and ",", or a space. With a decimal point, Indian
+ * lakh grouping ("12,34,567") is accepted too.
+ */
 const AMOUNT = {
-  '.': /^[-+]?([1-9]\d{0,2}(,\d{3})+|\d*)(\.\d+)?$/,
-  ',': /^[-+]?([1-9]\d{0,2}(\.\d{3})+|\d*)(,\d+)?$/,
+  '.': /^[-+]?([1-9]\d{0,2}([, ])\d{3}(\2\d{3})*|[1-9]\d?(,\d\d)+,\d{3}|\d*)(\.\d+)?$/,
+  ',': /^[-+]?([1-9]\d{0,2}([. ])\d{3}(\2\d{3})*|\d*)(,\d+)?$/,
 };
 
 /**
- * Parses "$1,234.50", "-12", "(45.00)", "-$5", "€12.00", "1,234.56-" and "12.00 USD", or with
- * `decimal` ",": "1.234,56" and "12,50". The other separator groups thousands, in threes.
- * Rounds to cents. Returns null if not numeric.
+ * Parses "$1,234.50", "-12", "(45.00)", "-$5", "€12.00", "1,234.56-", "12.00 USD" and
+ * "1,23,456.78", or with `decimal` ",": "1.234,56", "1 234,56" and "12,50". Thousands must be
+ * grouped as {@link AMOUNT} allows. Rounds to cents. Returns null if not numeric.
  */
 export function parseAmount(raw: string, decimal: DecimalSeparator = '.'): number | null {
-  let s = raw.trim().replace(MINUS, '-').replace(/\b[A-Z]{3}\b|[$€£¥\s]/g, '');
+  // Whitespace between two digits can only group thousands; elsewhere it is dropped.
+  let s = raw.replace(MINUS, '-').replace(/\b[A-Z]{3}\b|[$€£¥]/g, '').replace(/(?<!\d)\s+|\s+(?!\d)/g, '').replace(/\s/g, ' ');
   let neg = false;
   if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
   if (/^[^-+]*-$/.test(s)) { neg = !neg; s = s.slice(0, -1); }
   if (!/\d/.test(s) || !AMOUNT[decimal].test(s)) return null;
-  const plain = s.replaceAll(decimal === '.' ? ',' : '.', '').replace(',', '.');
+  const plain = s.replace(decimal === '.' ? /[, ]/g : /[. ]/g, '').replace(',', '.');
   // Rounding the "e2"-shifted text avoids binary error: 1.005 rounds to 1.01. Halves round away from zero.
   const n = Math.sign(Number(plain)) * Math.round(Math.abs(Number(`${plain}e2`))) / 100;
   return (neg ? -n : n) || 0;

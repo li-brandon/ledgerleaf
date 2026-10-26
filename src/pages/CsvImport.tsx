@@ -1,9 +1,10 @@
 import { useMemo, useState, type DragEvent } from 'react';
 import { slug } from '../lib/csv';
 import {
-  FIELD_LABEL, applyMapping, detectSeparator, errorRowsCsv, mappingFor, mappingProblem, readCsvTable, withImportMapping,
+  FIELD_LABEL, applyMapping, currencyDecimal, detectSeparator, errorRowsCsv, mappingFor, mappingProblem, readCsvTable, withImportMapping,
   type CsvMapping, type CsvTable, type DecimalSeparator, type MappingField, type RowError,
 } from '../lib/csvMapping';
+import { settingsOf } from '../lib/settings';
 import { CsvImportProvider } from '../lib/sync';
 import type { Account, AccountType } from '../lib/types';
 import type { Ledger } from '../store';
@@ -57,6 +58,9 @@ interface Props {
 /** Drop or pick a CSV, map its columns, choose the account and import through the CSV provider. */
 export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }: Props) {
   const { accounts, importMappings } = ledger.state;
+  // Amounts are shown in the display currency without conversion, so a file is read as being
+  // in it. Account.currency is not used: CSV accounts default it to USD whatever the user's bank.
+  const { currency } = settingsOf(ledger.state);
   const visible = accounts.filter((a) => !a.hidden);
   const [file, setFile] = useState<Loaded | null>(null);
   const [target, setTarget] = useState<string>(NEW);
@@ -130,10 +134,11 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
   const mappingError = file && mapping ? mappingProblem(mapping, file.table.headers) : undefined;
   const nameError = target === NEW && !newName.trim() ? 'Name the new account.' : undefined;
   const check = useMemo(
-    () => (file && mapping && !mappingError ? applyMapping(file.table, mapping, 'preview') : null),
-    [file, mapping, mappingError],
+    () => (file && mapping && !mappingError ? applyMapping(file.table, mapping, 'preview', currency) : null),
+    [file, mapping, mappingError, currency],
   );
   const detected = useMemo(() => (file && mapping ? detectSeparator(file.table, mapping) : undefined), [file, mapping]);
+  const usual = currencyDecimal(currency);
 
   async function runImport() {
     if (!file || !mapping || mappingError || nameError) return;
@@ -142,11 +147,13 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
       : undefined;
     const accountId = newAccount?.id ?? target;
     const accountName = newAccount?.name ?? accounts.find((a) => a.id === target)?.name ?? '';
-    const p = new CsvImportProvider(file.text, { mapping, accountId, newAccount });
+    const p = new CsvImportProvider(file.text, { mapping, accountId, newAccount, currency });
+    // Remember a separator the rows showed, but not the currency's guess: a later file may show otherwise.
+    const saved = { ...mapping, decimal: mapping.decimal ?? detected };
     setImporting(true);
     onBusy(true);
     try {
-      const r = await ledger.runSync(p, (s) => withImportMapping(s, accountId, mapping));
+      const r = await ledger.runSync(p, (s) => withImportMapping(s, accountId, saved));
       setSummary({
         file: file.name, account: accountName, added: r.added, duplicates: r.received - r.added,
         errors: p.errors, table: file.table,
@@ -272,7 +279,9 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
               <span>Decimal separator</span>
               <select value={mapping.decimal ?? ''}
                 onChange={(e) => setMapping({ ...mapping, decimal: (e.target.value || undefined) as DecimalSeparator | undefined })}>
-                <option value="">Detect ({detected ? DECIMAL_LABEL[detected] : 'unclear from the rows'})</option>
+                <option value="">
+                  Detect ({detected ? DECIMAL_LABEL[detected] : usual ? `${DECIMAL_LABEL[usual]}, usual for ${currency}` : 'unclear from the rows'})
+                </option>
                 <option value=".">{DECIMAL_LABEL['.']}</option>
                 <option value=",">{DECIMAL_LABEL[',']}</option>
               </select>

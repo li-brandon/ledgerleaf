@@ -136,6 +136,23 @@ export function detectSeparator(table: CsvTable, mapping: CsvMapping): DecimalSe
   return detectDecimal(table.rows.flatMap((r) => cols.filter((i) => i >= 0).map((i) => r[i] ?? '')));
 }
 
+/**
+ * The decimal separator bank exports in `currency` almost always use. Currencies whose
+ * exports commonly use either (CHF, SEK, …) are left out, so their files stay ambiguous.
+ */
+const CURRENCY_DECIMAL: Record<string, DecimalSeparator> = {
+  USD: '.', GBP: '.', CAD: '.', AUD: '.', NZD: '.', JPY: '.', CNY: '.', INR: '.', MXN: '.', SGD: '.',
+  EUR: ',', BRL: ',',
+};
+
+export const currencyDecimal = (currency?: string): DecimalSeparator | undefined =>
+  currency ? CURRENCY_DECIMAL[currency] : undefined;
+
+/** The separator amounts are read with: the mapping's, else the file's, else the usual one for `currency`. */
+export function decimalFor(table: CsvTable, mapping: CsvMapping, currency?: string): DecimalSeparator | undefined {
+  return mapping.decimal ?? detectSeparator(table, mapping) ?? currencyDecimal(currency);
+}
+
 type Cell = { ok: true; value: number } | { ok: false; reason: string };
 
 function mappedAmount(get: (col?: string) => string, m: CsvMapping, decimal?: DecimalSeparator): Cell {
@@ -161,11 +178,11 @@ function mappedAmount(get: (col?: string) => string, m: CsvMapping, decimal?: De
 /**
  * Turn table rows into transactions for `accountId` using `mapping`. Rows with a bad
  * date, description or amount become {@link RowError}s instead, as do amounts that read
- * differently with each decimal separator when the mapping does not set one and the file
- * does not show it. Amounts are rounded to cents. Ids are content hashes
+ * differently with each decimal separator when neither the mapping, the file nor `currency`
+ * settles one (see {@link decimalFor}). Amounts are rounded to cents. Ids are content hashes
  * (see {@link contentIds}), so mapping the same file again yields the same transactions.
  */
-export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: string): MappedRows {
+export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: string, currency?: string): MappedRows {
   const problem = mappingProblem(mapping, table.headers);
   if (problem) throw new Error(problem);
   const col = new Map(table.headers.map((h, i) => [h, i]));
@@ -173,7 +190,7 @@ export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: st
   const transactions: Transaction[] = [];
   const errors: RowError[] = [];
   const offset = table.hasHeader ? 2 : 1;
-  const decimal = mapping.decimal ?? detectSeparator(table, mapping);
+  const decimal = decimalFor(table, mapping, currency);
 
   table.rows.forEach((cells, i) => {
     const get = (c?: string) => (c === undefined ? '' : (cells[col.get(c)!] ?? '').trim());
