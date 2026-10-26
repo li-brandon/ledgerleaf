@@ -18,6 +18,8 @@ export interface CsvImportOptions {
   accountId: string;
   /** Set when the target account does not exist yet; it is created by the sync. */
   newAccount?: Account;
+  /** `mapping.decimal` is the account's saved one, not chosen for this file (see {@link applyMapping}). */
+  savedDecimal?: boolean;
 }
 
 interface Parsed {
@@ -51,7 +53,7 @@ export class CsvImportProvider implements SyncProvider {
       return (this.parsed = { ...parseTransactionsCsv(this.text), errors: [] });
     }
     const table = readCsvTable(this.text);
-    const { transactions, errors } = applyMapping(table, o.mapping, o.accountId);
+    const { transactions, errors } = applyMapping(table, o.mapping, o.accountId, { savedDecimal: o.savedDecimal });
     return (this.parsed = { accounts: o.newAccount ? [o.newAccount] : [], transactions, skipped: errors.length, errors, table });
   }
 

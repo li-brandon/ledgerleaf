@@ -160,6 +160,30 @@ describe('CSV import flow', () => {
     expect(state.importMappings?.['csv-us']).toMatchObject({ decimal: '.' });
   });
 
+  it('does not let a saved separator settle ambiguous rows until it is confirmed', async () => {
+    const user = userEvent.setup();
+    await renderApp({
+      ...emptyLedger(),
+      accounts: [{ id: 'giro', name: 'Giro', type: 'checking' }],
+      importMappings: { giro: { date: 'Date', description: 'Description', amount: 'Amount', decimal: ',' } },
+    }, '#/connections');
+    const ui = within(card());
+    await user.upload(fileInput(), csvFile('Date,Description,Amount\n2026-10-01,Pay,"1,234"\n2026-10-02,Rent,"-2,500"\n2026-10-03,Tea,-3', 'giro.csv'));
+    await ui.findByText('giro.csv');
+    expect(ui.getByLabelText('Account')).toHaveValue('giro');
+    expect(ui.getByLabelText('Decimal separator')).toHaveValue(',');
+    expect(ui.getByText((_, el) => el?.tagName === 'P' && /^1 rows ready to import/.test(el.textContent ?? '')))
+      .toHaveTextContent('1 rows ready to import, 2 with errors (first: row 2, Ambiguous amount "1,234": choose the decimal separator).');
+    expect(ui.getByRole('button', { name: 'Use Point: 1,234.56 (usual for USD) for ambiguous rows' })).toBeInTheDocument();
+
+    await user.click(ui.getByRole('button', { name: 'Use Comma: 1.234,56 (saved for this account) for ambiguous rows' }));
+    expect(ui.getByText('3 rows ready to import.')).toBeInTheDocument();
+    expect(ui.queryByRole('button', { name: /for ambiguous rows/ })).toBeNull();
+    await user.click(ui.getByRole('button', { name: 'Import 3 rows' }));
+    await ui.findByRole('status');
+    expect((await stored()).transactions.map((t) => t.amount).sort((a, b) => a - b)).toEqual([-3, -2.5, 1.23]);
+  });
+
   it('warns when the rows show a different separator from the selected one', async () => {
     const user = userEvent.setup();
     await renderApp(undefined, '#/connections');
