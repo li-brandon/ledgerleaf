@@ -1,10 +1,10 @@
 import { parseTransactionsCsv } from '../csv';
-import { applyMapping, readCsvTable, type CsvTable, type RowError } from '../csvMapping';
+import { CSV_SOURCE, applyMapping, matchExisting, readCsvTable, type CsvTable, type RowError } from '../csvMapping';
 import type { Account, CsvMapping, Transaction } from '../types';
 import type { ProviderMeta, SyncProvider } from './types';
 
 export const CSV_PROVIDER: ProviderMeta = {
-  id: 'csv',
+  id: CSV_SOURCE,
   name: 'CSV import',
   kind: 'file',
   requiresAuth: false,
@@ -22,6 +22,12 @@ export interface CsvImportOptions {
   savedDecimal?: boolean;
   /** `mapping.dateOrder` is the account's saved one, not chosen for this file (see {@link applyMapping}). */
   savedDateOrder?: boolean;
+  /**
+   * The ledger's transactions. Rows matching one of the account's CSV transactions except for
+   * sign are left out (see {@link matchExisting}), and rows matching one stored under a signed id
+   * from before LIB-379 take its id. Without it, every row is imported as mapped.
+   */
+  existing?: readonly Transaction[];
 }
 
 interface Parsed {
@@ -30,6 +36,8 @@ interface Parsed {
   skipped: number;
   /** Per-row details, for mapped imports. */
   errors: RowError[];
+  /** Rows left out as opposite-sign duplicates of existing transactions. */
+  oppositeSign: number;
   table?: CsvTable;
 }
 
@@ -52,12 +60,16 @@ export class CsvImportProvider implements SyncProvider {
     if (this.parsed) return this.parsed;
     const o = this.options;
     if (!o) {
-      return (this.parsed = { ...parseTransactionsCsv(this.text), errors: [] });
+      return (this.parsed = { ...parseTransactionsCsv(this.text), errors: [], oppositeSign: 0 });
     }
     // Read with the mapping's delimiter, else the detected one, as the import screen's preview is.
     const table = readCsvTable(this.text, o.mapping.delimiter);
-    const { transactions, errors } = applyMapping(table, o.mapping, o.accountId, { savedDecimal: o.savedDecimal, savedDateOrder: o.savedDateOrder });
-    return (this.parsed = { accounts: o.newAccount ? [o.newAccount] : [], transactions, skipped: errors.length, errors, table });
+    const mapped = applyMapping(table, o.mapping, o.accountId, { savedDecimal: o.savedDecimal, savedDateOrder: o.savedDateOrder });
+    const { transactions, oppositeSign } = matchExisting(mapped.transactions, o.existing ?? []);
+    const { errors } = mapped;
+    return (this.parsed = {
+      accounts: o.newAccount ? [o.newAccount] : [], transactions, skipped: errors.length, errors, oppositeSign: oppositeSign.size, table,
+    });
   }
 
   /** Rows that could not be read (bad date, amount or missing description). */
@@ -68,6 +80,11 @@ export class CsvImportProvider implements SyncProvider {
   /** Why each unreadable row was skipped (mapped imports only). */
   get errors(): RowError[] {
     return this.parse().errors;
+  }
+
+  /** Rows left out because they match an existing transaction except for sign (mapped imports with `existing`). */
+  get oppositeSign(): number {
+    return this.parse().oppositeSign;
   }
 
   /** The parsed file, for mapped imports. */

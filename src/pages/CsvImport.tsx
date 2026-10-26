@@ -2,7 +2,7 @@ import { useMemo, useState, type DragEvent } from 'react';
 import { fmtDay, fmtMoney } from '../format';
 import { DELIMITERS, detectDelimiter, normalizeDate, slug } from '../lib/csv';
 import {
-  FIELD_LABEL, applyMapping, currencyDecimal, detectMapping, detectOrder, detectSeparator, errorRowsCsv, mappingProblem, readCsvTable,
+  FIELD_LABEL, applyMapping, currencyDecimal, detectMapping, detectOrder, detectSeparator, errorRowsCsv, mappingProblem, matchExisting, readCsvTable,
   withImportMapping, type CsvDelimiter, type CsvMapping, type CsvTable, type DateOrder, type DecimalSeparator, type MappingField,
   type RowError,
 } from '../lib/csvMapping';
@@ -55,7 +55,7 @@ function loaded(name: string, text: string): Loaded {
 /** Whether `saved` fits the file read with its own delimiter, the one its columns were named under. */
 const fits = (f: Loaded, saved: CsvMapping) => !mappingProblem(saved, f.table(saved.delimiter).headers);
 
-interface Summary { file: string; account: string; added: number; duplicates: number; errors: RowError[]; table: CsvTable }
+interface Summary { file: string; account: string; added: number; duplicates: number; oppositeSign: number; errors: RowError[]; table: CsvTable }
 
 /** An account id for a new account named `name` that no existing account uses. */
 function newAccountId(name: string, accounts: Account[]) {
@@ -88,7 +88,7 @@ interface Props {
 
 /** Drop or pick a CSV, map its columns, choose the account and import through the CSV provider. */
 export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }: Props) {
-  const { accounts, importMappings } = ledger.state;
+  const { accounts, importMappings, transactions } = ledger.state;
   // The display currency's usual separator is offered for ambiguous amounts. Account.currency is
   // not used: CSV accounts default it to USD whatever the user's bank.
   const { currency } = settingsOf(ledger.state);
@@ -180,10 +180,15 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
   const nameError = target === NEW && !newName.trim() ? 'Name the new account.' : undefined;
   const savedDecimal = !decimalChosen;
   const savedDateOrder = !dateOrderChosen;
+  // Mapped into the target account, so rows are matched against its transactions as the import will (see CsvImportProvider).
+  const previewAccount = target === NEW ? 'preview' : target;
   const check = useMemo(
-    () => (table && mapping && !mappingError ? applyMapping(table, mapping, 'preview', { savedDecimal, savedDateOrder }) : null),
-    [table, mapping, mappingError, savedDecimal, savedDateOrder],
+    () => (table && mapping && !mappingError ? applyMapping(table, mapping, previewAccount, { savedDecimal, savedDateOrder }) : null),
+    [table, mapping, mappingError, previewAccount, savedDecimal, savedDateOrder],
   );
+  const matched = useMemo(() => (check ? matchExisting(check.transactions, transactions) : null), [check, transactions]);
+  const ready = matched?.transactions.length ?? 0;
+  const oppositeSign = matched?.oppositeSign.size ?? 0;
   const detected = useMemo(() => (table && mapping ? detectSeparator(table, mapping) : undefined), [table, mapping]);
   const usual = currencyDecimal(currency);
   const ambiguous = !!check?.errors.some((e) => e.kind === 'ambiguous');
@@ -213,7 +218,7 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
       : undefined;
     const accountId = newAccount?.id ?? target;
     const accountName = newAccount?.name ?? accounts.find((a) => a.id === target)?.name ?? '';
-    const p = new CsvImportProvider(file.text, { mapping, accountId, newAccount, savedDecimal, savedDateOrder });
+    const p = new CsvImportProvider(file.text, { mapping, accountId, newAccount, savedDecimal, savedDateOrder, existing: transactions });
     // Remember a separator and date order the rows showed, so a later file whose rows don't show one is offered it,
     // and the delimiter the file was read with, so its columns are found again.
     const next = {
@@ -225,7 +230,7 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
       const r = await ledger.runSync(p, (s) => withImportMapping(s, accountId, next));
       setSummary({
         file: file.name, account: accountName, added: r.added, duplicates: r.received - r.added,
-        errors: p.errors, table,
+        oppositeSign: p.oppositeSign, errors: p.errors, table,
       });
       onResult(null);
       close();
@@ -268,6 +273,7 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
           <dl className="stats">
             <div><dt>Added</dt><dd className="pos">{summary.added}</dd></div>
             <div><dt>Duplicates skipped</dt><dd>{summary.duplicates}</dd></div>
+            {summary.oppositeSign > 0 && <div><dt>Opposite-sign duplicates skipped</dt><dd>{summary.oppositeSign}</dd></div>}
             <div><dt>Rows with errors</dt><dd className={summary.errors.length ? 'neg' : ''}>{summary.errors.length}</dd></div>
           </dl>
           {summary.errors.length > 0 && (
@@ -429,13 +435,14 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
                         </tr>
                       );
                     }
+                    const flipped = matched?.oppositeSign.has(r);
                     return (
-                      <tr key={i}>
+                      <tr key={i} className={flipped ? 'rejected' : undefined}>
                         <td title={raw(mapping.date)}>{fmtDay(r.date)}</td>
                         <td title={raw(mapping.description)}>{r.description}</td>
                         <td title={rawAmount} className={`num ${r.amount > 0 ? 'pos' : ''}`}>{fmtMoney(r.amount)}</td>
                         <td title={raw(mapping.category)}>{r.category}</td>
-                        <td className="issue">Ready</td>
+                        <td className={flipped ? 'issue neg' : 'issue'}>{flipped ? 'Opposite-sign duplicate' : 'Ready'}</td>
                       </tr>
                     );
                   })}
@@ -464,14 +471,20 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
           </div>
 
           {(mappingError || nameError) && <p className="notice error" role="alert">{mappingError ?? nameError}</p>}
+          {oppositeSign > 0 && (
+            <p className="notice">
+              {oppositeSign} opposite-sign duplicates of existing transactions will be skipped: they match transactions
+              already in this account except for sign. Check that flip signs is set as it was for the earlier import.
+            </p>
+          )}
           {check && (
             <p className="muted">
-              {check.transactions.length} rows ready to import
+              {ready} rows ready to import
               {check.errors.length > 0 && <>, <span className="neg">{check.errors.length} with errors</span> (first: row {check.errors[0].row}, {check.errors[0].reason})</>}.
             </p>
           )}
-          <button onClick={runImport} disabled={disabled || importing || !!mappingError || !!nameError || !check?.transactions.length}>
-            {importing ? 'Importing…' : `Import ${check?.transactions.length ?? 0} rows`}
+          <button onClick={runImport} disabled={disabled || importing || !!mappingError || !!nameError || !ready}>
+            {importing ? 'Importing…' : `Import ${ready} rows`}
           </button>
         </>
       )}

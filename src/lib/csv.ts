@@ -200,20 +200,31 @@ export function detectDecimal(values: string[]): DecimalSeparator | undefined {
 export const slug = (s: string) =>
   s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'imported';
 
-/**
- * Content-hash ids for CSV rows: the row's date, description, amount and account plus how
- * many identical rows came before it in the file. Re-importing a file gives the same ids,
- * so dedupe applies, while genuine same-day repeats are kept apart.
- */
-export function contentIds() {
+function hashedIds(signed: boolean) {
   const occurrences = new Map<string, number>();
   return (date: string, description: string, amount: number, accountId: string) => {
-    const key = [date, description.toLowerCase(), amount.toFixed(2), accountId].join('|');
+    const key = [date, description.toLowerCase(), (signed ? amount : Math.abs(amount)).toFixed(2), accountId].join('|');
     const n = occurrences.get(key) ?? 0;
     occurrences.set(key, n + 1);
-    return hashId(`${key}#${n}`);
+    // The prefix keeps these ids apart from signed ones, which hash the same text for positive amounts.
+    return hashId(`${signed ? '' : 'unsigned|'}${key}#${n}`);
   };
 }
+
+/**
+ * Content-hash ids for CSV rows: the row's date, description, absolute amount and account plus
+ * how many rows with the same values came before it in the file. Re-importing a file gives the
+ * same ids whatever its signs, so dedupe applies even when signs were flipped, while genuine
+ * same-day repeats (and rows differing only in sign) are kept apart.
+ */
+export const contentIds = () => hashedIds(false);
+
+/**
+ * Ids as {@link contentIds} made them before LIB-379, from the signed amount. Transactions
+ * imported then keep them, so mapped imports also compute these to find them (see
+ * `matchExisting` in csvMapping), and {@link parseTransactionsCsv} still uses them.
+ */
+export const signedContentIds = () => hashedIds(true);
 
 /**
  * Serialise rows as CSV, escaping each cell with {@link csvCell}. Plain negative numbers such
@@ -237,7 +248,9 @@ const COLUMNS = ['date', 'description', 'amount', 'category', 'account'] as cons
  * header order respected). The delimiter is detected (see {@link detectDelimiter}), the decimal
  * separator from the amounts and the date order from the dates; rows whose amount or date stays
  * ambiguous are skipped (see {@link readAmount} and {@link readDate}). Ids hash the row content plus its occurrence index, so
- * re-importing the same file dedupes while genuine same-day repeats are kept.
+ * re-importing the same file dedupes while genuine same-day repeats are kept. This parser has no
+ * sign flip, so it keeps the signed ids ({@link signedContentIds}): every id it has stored stays
+ * valid without needing to see the ledger.
  */
 export function parseTransactionsCsv(text: string): CsvParseResult {
   const rows = parseCsvRows(text, detectDelimiter(text));
@@ -248,7 +261,7 @@ export function parseTransactionsCsv(text: string): CsvParseResult {
   }
   const accounts = new Map<string, Account>();
   const transactions: Transaction[] = [];
-  const idFor = contentIds();
+  const idFor = signedContentIds();
   const decimal = detectDecimal(idx.amount >= 0 ? rows.map((r) => r[idx.amount] ?? '') : []);
   const order = detectDateOrder(idx.date >= 0 ? rows.map((r) => r[idx.date] ?? '') : []);
   let skipped = 0;

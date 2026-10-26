@@ -1,5 +1,5 @@
 import {
-  ambiguousDate, contentIds, detectDateOrder, detectDecimal, detectDelimiter, parseCsvRows, readAmount, readDate, toCsv,
+  ambiguousDate, contentIds, detectDateOrder, detectDecimal, detectDelimiter, parseCsvRows, readAmount, readDate, signedContentIds, toCsv,
 } from './csv';
 import type { CsvDelimiter, CsvMapping, DateOrder, DecimalSeparator, LedgerState, Transaction } from './types';
 
@@ -220,8 +220,9 @@ function mappedAmount(get: (col?: string) => string, m: CsvMapping, decimal: Dec
  * differently with each decimal separator when neither the mapping nor the file settles
  * one (see {@link decimalFor}), or when a saved separator is not backed by the file's rows (see
  * {@link MappingOptions}). Dates that read differently in each date order are errors in the same
- * way (see {@link dateOrderFor}). Amounts are rounded to cents. Ids are content hashes
- * (see {@link contentIds}), so mapping the same file again yields the same transactions.
+ * way (see {@link dateOrderFor}). Amounts are rounded to cents. Ids are content hashes of the
+ * absolute amount (see {@link contentIds}), so mapping the same file again yields the same ids,
+ * with or without `mapping.negate`.
  */
 export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: string, options: MappingOptions = {}): MappedRows {
   const problem = mappingProblem(mapping, table.headers);
@@ -269,6 +270,48 @@ export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: st
     rows.push(tx);
   });
   return { transactions, errors, rows };
+}
+
+/** Source CSV imports stamp on their transactions (the CSV provider's id). */
+export const CSV_SOURCE = 'csv';
+
+export interface ExistingMatch {
+  /**
+   * The rows to import, in order. A row matching a transaction stored under its signed id (see
+   * {@link signedContentIds}) carries that transaction's id and externalId, so it dedupes against it.
+   */
+  transactions: Transaction[];
+  /** Rows that match an existing transaction except for sign; they are left out of `transactions`. */
+  oppositeSign: Set<Transaction>;
+}
+
+/**
+ * Match mapped rows against the CSV transactions already in their accounts: by id (see
+ * {@link contentIds}), else by the signed id imports made before LIB-379, as the file would have
+ * had it with and without flipped signs. A row whose match has the opposite sign (both non-zero)
+ * is an opposite-sign duplicate: importing it would overwrite the stored amount's sign, so it is
+ * left out. Each existing transaction matches at most one row.
+ */
+export function matchExisting(rows: readonly Transaction[], existing: readonly Transaction[]): ExistingMatch {
+  const key = (accountId: string, externalId?: string) => JSON.stringify([accountId, externalId]);
+  const stored = new Map(existing.filter((t) => t.source === CSV_SOURCE && t.externalId).map((t) => [key(t.accountId, t.externalId), t]));
+  const signed = signedContentIds();
+  const flipped = signedContentIds();
+  const claimed = new Set<Transaction>();
+  const transactions: Transaction[] = [];
+  const oppositeSign = new Set<Transaction>();
+  for (const t of rows) {
+    const ids = [t.externalId, signed(t.date, t.description, t.amount, t.accountId), flipped(t.date, t.description, -t.amount, t.accountId)];
+    const match = ids.map((id) => stored.get(key(t.accountId, id))).find((m) => m && !claimed.has(m));
+    if (!match) {
+      transactions.push(t);
+      continue;
+    }
+    claimed.add(match);
+    if (t.amount && match.amount && Math.sign(t.amount) !== Math.sign(match.amount)) oppositeSign.add(t);
+    else transactions.push(match.externalId === t.externalId ? t : { ...t, id: match.id, externalId: match.externalId });
+  }
+  return { transactions, oppositeSign };
 }
 
 /** The rows that failed, as CSV in the original columns plus a trailing "Error" column. */
