@@ -11,9 +11,11 @@ const snapshotKey = (s: Pick<BalanceSnapshot, 'accountId' | 'date'>) => `${s.acc
 
 /**
  * Record a CSV import that turned `prev` into `next`. Every row of the file (`fileIds`, the ids
- * of the transactions the provider read), whether the import added it or it matched one already
- * held, gets the batch id appended to its `importBatchIds`; so does any transaction the import
- * added under another id. The batch notes what else the import created or replaced (the
+ * of the transactions the provider read) that the import added, or that matched one already held
+ * that some import claims, gets the batch id appended to its `importBatchIds`; so does any
+ * transaction the import added under another id. A matched row no import claims (imported before
+ * batches were recorded, or restored from an older backup) is never claimed, so no undo deletes
+ * it. The batch notes what else the import created or replaced (the
  * account, categories, balance snapshots) so {@link undoImport} can take it back. Pure.
  */
 export function recordImport(next: LedgerState, prev: LedgerState, draft: ImportDraft, fileIds: Iterable<string>): LedgerState {
@@ -22,7 +24,7 @@ export function recordImport(next: LedgerState, prev: LedgerState, draft: Import
   let added = 0;
   const transactions = next.transactions.map((t) => {
     if (!had.has(t.id)) added++;
-    else if (!inFile.has(t.id)) return t;
+    else if (!inFile.has(t.id) || !t.importBatchIds?.length) return t;
     return t.importBatchIds?.includes(draft.id) ? t : { ...t, importBatchIds: [...(t.importBatchIds ?? []), draft.id] };
   });
   const batch: ImportBatch = { ...draft, added };

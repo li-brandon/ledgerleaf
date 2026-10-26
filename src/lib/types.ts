@@ -56,7 +56,8 @@ export interface Transaction {
   /**
    * Ids of the CSV imports whose file contained this transaction, whether the import added it or
    * it matched one already held, oldest first (see {@link ImportBatch}). Undoing the last of them
-   * deletes it; absent when no import claims it.
+   * deletes it; absent when no import claims it. A row held without claims is never claimed by a
+   * later import that matches it, so no undo deletes it.
    */
   importBatchIds?: string[];
 }

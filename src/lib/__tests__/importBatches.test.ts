@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { makeBackup, parseBackup, restoreBackup, type Backup } from '../../db/backup';
 import { detectMapping, readCsvTable, withImportMapping } from '../csvMapping';
 import { batchTransactionCount, newBatchId, recordImport, undoImport } from '../importBatches';
 import { emptyLedger } from '../migrate';
@@ -38,6 +39,14 @@ async function importCsv(state: LedgerState, text: string, account: Account, now
     id, file, accountId: account.id, rows: readCsvTable(text).rows.length, at: now.toISOString(),
   }, fileIds);
   return { state: next, id };
+}
+
+/** An import as it ran before batches were recorded: through the sync pipeline only, rows left untagged. */
+async function importUntagged(state: LedgerState, text: string, account: Account, now = DAY1) {
+  const mapping = detectMapping(readCsvTable(text).headers);
+  const newAccount = state.accounts.some((a) => a.id === account.id) ? undefined : account;
+  const p = new CsvImportProvider(text, { mapping, accountId: account.id, newAccount, existing: state.transactions });
+  return withImportMapping(applySync(state, p.id, await fetchSync(p, state), now).state, account.id, mapping);
 }
 
 /** Net worth as the Dashboard's trend shows it for this month. */
@@ -280,6 +289,41 @@ describe('undoImport', () => {
       expect(batchTransactionCount(undone, b.id)).toBe(3);
 
       expect(undoImport(undone, b.id).transactions.some((t) => t.accountId === everyday.id)).toBe(false);
+    });
+
+    it.each([['a day apart', DAY2], ['on the same day', DAY1]] as const)(
+      'never claims a row imported before batches were recorded, %s', async (_, day) => {
+        const before = await importUntagged(await base(), FILE, everyday);
+        const b = await importCsv(before, MORE, everyday, day);
+        expect(b.state.transactions.find((t) => t.description === 'Corner Grocer')!.importBatchIds).toBeUndefined();
+        expect(b.state.importBatches?.[0].added).toBe(2);
+        expect(batchTransactionCount(b.state, b.id)).toBe(2);
+
+        // Corner Grocer stays, and the snapshot goes back to the pre-import one (or away, if MORE wrote a new day's).
+        const undone = undoImport(b.state, b.id);
+        expect(everydaySnapshots(undone)).toEqual([['2026-10-20', 2427.9]]);
+        expect(meaningful(undone)).toEqual(meaningful(before));
+      });
+
+    it('counts untagged rows as existing when recomputing a remaining import\'s snapshot', async () => {
+      const DAY3 = new Date(2026, 9, 22, 9);
+      const a = await importCsv(await importUntagged(emptyLedger(MONTH), FILE, everyday), MORE, everyday, DAY2);
+      const c = await importCsv(a.state, 'Date,Description,Amount\n2026-10-17,Cafe,-4', everyday, DAY3);
+      // FILE's rows (Corner Grocer too) and Cafe remain: 2427.9 - 4.
+      expect(everydaySnapshots(undoImport(c.state, a.id))).toEqual([['2026-10-20', 2427.9], ['2026-10-22', 2423.9]]);
+    });
+
+    it('never claims a row restored from a backup made before batches were recorded', async () => {
+      const a = await importCsv(emptyLedger(MONTH), FILE, everyday);
+      const old = JSON.parse(JSON.stringify(makeBackup(a.state)));
+      for (const t of old.stores.transactions) delete t.importBatchIds;
+      delete old.meta.importBatches;
+      const restored = restoreBackup(emptyLedger(MONTH), (parseBackup(JSON.stringify(old)) as { backup: Backup }).backup, 'replace').state;
+      expect(restored.transactions.some((t) => t.importBatchIds)).toBe(false);
+
+      const b = await importCsv(restored, FILE, everyday, DAY2);
+      expect(batchTransactionCount(b.state, b.id)).toBe(0);
+      expect(meaningful(undoImport(b.state, b.id))).toEqual(meaningful(restored));
     });
 
     it('never deletes a row no import claims', async () => {
