@@ -232,8 +232,10 @@ function ManualForm({ today, onCancel, onSave }: {
   }
 
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape from the inputs inside cancels the form; the form itself is not a control
     <form className="cat-form" onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && onCancel()} aria-label="New recurring charge">
       <label className="field">Name
+        {/* eslint-disable-next-line jsx-a11y/no-autofocus -- the inline recurring-charge form opens on Add; focus moves to its first field */}
         <input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
       </label>
       <label className="field">Amount

@@ -80,7 +80,9 @@ function AccountItem({ row: { account: a, balance }, count, ledger }: { row: Acc
   return (
     <li className={a.hidden ? 'is-hidden' : undefined}>
       {editing ? (
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape from the inputs inside cancels the form; the form itself is not a control
         <form className="rename" onSubmit={save} onKeyDown={(e) => e.key === 'Escape' && setEditing(false)}>
+          {/* eslint-disable-next-line jsx-a11y/no-autofocus -- the inline rename form opens on Rename; focus moves to the field the user asked to edit */}
           <input aria-label={`New name for ${a.name}`} value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
           <button type="submit" disabled={!name.trim()}>Save</button>
           <button type="button" className="link" onClick={() => setEditing(false)}>Cancel</button>

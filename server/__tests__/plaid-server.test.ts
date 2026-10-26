@@ -10,10 +10,12 @@ import { HOST, createApp, loadEnvFile, resolveConfig, startServer } from '../pla
 const ACCESS_TOKEN = 'access-sandbox-SECRET-123';
 const config = resolveConfig({ PLAID_CLIENT_ID: 'client-id', PLAID_SECRET: 'shh-secret', PLAID_SERVER_PORT: '0' });
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- fake handlers read arbitrary fields of the parsed JSON request body
 type Handler = (body: Record<string, any>) => { status?: number; json: unknown } | Promise<{ status?: number; json: unknown }>;
 
 /** A fake Plaid REST API: answers by path and records every request body. */
 function fakePlaid(routes: Record<string, Handler>) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- assertions read arbitrary fields of the recorded JSON bodies
   const calls: { url: string; body: Record<string, any> }[] = [];
   const fetch = vi.fn(async (url: string, init: RequestInit) => {
     const body = JSON.parse(String(init.body));

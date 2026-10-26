@@ -37,6 +37,7 @@ export default function Transactions({ ledger, params }: PageProps) {
     written.current = urlHref;
     setForm(params);
     if (activeFilterCount({ ...parseFilters(params), q: '' }) > 0) setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the canonical URL on purpose: re-running on every new `params` object could reset the form to a stale URL after a debounced write
   }, [urlHref]);
 
   useEffect(() => {

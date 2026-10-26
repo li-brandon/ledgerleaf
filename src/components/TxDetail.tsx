@@ -56,6 +56,7 @@ export default function TxDetail({ tx, accountName, categories, rules, ledger, c
   };
 
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape from the fields inside blurs them; the panel itself is not a control
     <aside className="tx-detail" aria-labelledby="tx-detail-title" onKeyDown={onKeyDown}>
       <header className="tx-detail-head">
         <div className="tx-detail-title">
