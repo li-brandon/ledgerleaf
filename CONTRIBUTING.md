@@ -2,7 +2,7 @@
 
 ## The rule: every change lands through a pull request
 
-Nothing is pushed straight to `main`. Each change gets its own branch and pull request, and a pull request is merged only when CI is green. That way every change on `main` has passed lint, tests with coverage, the build and the audit, and links back to the Linear issue it came from.
+Nothing is pushed straight to `main`. Each change gets its own branch and pull request, and a pull request is merged only after Argus has reviewed it, every review comment has been addressed, and CI is green on the head commit; then Argus squash-merges it. That way every change on `main` has been reviewed, has passed lint, tests with coverage, the build and the audit, and links back to the Linear issue it came from.
 
 GitHub does not enforce this (see [Why this isn't enforced](#why-this-isnt-enforced)), so it's a convention everyone follows, including agents (see [`AGENTS.md`](AGENTS.md)).
 
@@ -13,9 +13,10 @@ GitHub does not enforce this (see [Why this isn't enforced](#why-this-isnt-enfor
 3. **Commit** on that branch. Keep it to that issue: no unrelated changes.
 4. **Run the CI checks locally** (see [What CI checks](#what-ci-checks)).
 5. **Open a pull request** against `main`. The template ([`.github/pull_request_template.md`](.github/pull_request_template.md)) asks for the Linear issue, what changed and why, a test note and a checklist.
-6. **Wait for CI to go green.** If it fails, push fixes to the same branch.
-7. **Squash-merge** the pull request. The squash commit uses the PR title (see [Titles](#titles)).
-8. **Move the Linear issue to Done.** The issue key in the branch name and PR links them to the issue in Linear.
+6. **Wait for CI to go green** on the head commit. If it fails, push fixes (new commits) to the same branch.
+7. **Argus reviews.** Address every review comment with new commits (no force-pushes) and reply on each thread.
+8. **Argus squash-merges** once every comment is addressed and CI is green on the head commit. The squash commit uses the PR title (see [Titles](#titles)).
+9. **Move the Linear issue to Done.** The issue key in the branch name and PR links them to the issue in Linear.
 
 Never push directly to `main`, and never force-push to it.
 
@@ -61,7 +62,7 @@ Run the same commands locally before opening a pull request.
 If enforcement is wanted later, there are two options:
 
 - **Make the repository public.** Branch protection and rulesets are available on public repositories on the free plan.
-- **Upgrade to GitHub Pro or Team**, which offers branch protection and rulesets on private repositories.
+- **Upgrade to GitHub Pro**, which offers branch protection and rulesets on private repositories.
 
 Either way, a ruleset or branch protection rule on `main` would then:
 
