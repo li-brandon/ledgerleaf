@@ -59,7 +59,9 @@ export default function CommandPalette({ onTheme }: { onTheme(theme: Theme): voi
   };
 
   return (
+    // eslint-disable-next-line jsx-a11y/no-static-element-interactions -- clicking the backdrop dismisses; keyboard users close with Escape
     <div className="palette-backdrop" onMouseDown={() => setOpen(false)}>
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- keys and mouse-downs are handled for the input inside (focus stays in the combobox), not the dialog itself */}
       <div className="palette" role="dialog" aria-modal="true" aria-label="Command palette"
         onMouseDown={(e) => {
           e.stopPropagation();
@@ -73,6 +75,7 @@ export default function CommandPalette({ onTheme }: { onTheme(theme: Theme): voi
         {!matches.length && <p className="palette-empty muted" role="status">No matches</p>}
         <ul className="palette-list" role="listbox" id={`${id}-list`} aria-label="Commands">
           {items.map((c, i) => (
+            // eslint-disable-next-line jsx-a11y/click-events-have-key-events -- options are chosen from the keyboard via the combobox input (arrows + Enter, aria-activedescendant)
             <li key={c.id} id={optionId(i)} role="option" aria-selected={i === active}
               onMouseEnter={() => setActive(i)} onClick={() => run(c)}>
               <span>{c.label}</span><span className="palette-hint">{c.hint}</span>

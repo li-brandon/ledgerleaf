@@ -26,6 +26,7 @@ function sample(): LedgerState {
 
 const roundTrip = (s: LedgerState) => parseBackup(JSON.stringify(makeBackup(s, NOW)));
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- tamper callbacks mutate arbitrary nested fields of the parsed backup JSON
 const tamper = (fn: (b: Record<string, any>) => void) => {
   const b = JSON.parse(JSON.stringify(makeBackup(sample(), NOW)));
   fn(b);

@@ -68,9 +68,8 @@ describe('persister', () => {
 
 describe('schema upgrades in another tab', () => {
   it('blocking: saves through the callback, closes, and lets the upgrade finish', async () => {
-    let repo: Repository | undefined;
-    const onBlocking = vi.fn(() => repo!.apply({ meta: { lastSync: 'before closing' } }));
-    repo = await openIdbRepository(DB_NAME, { onBlocking });
+    const onBlocking = vi.fn(() => repo.apply({ meta: { lastSync: 'before closing' } }));
+    const repo = await openIdbRepository(DB_NAME, { onBlocking });
     await saveLedger(repo, emptyLedger('2026-10'));
 
     const upgraded = await openDB(DB_NAME, DB_VERSION + 1);

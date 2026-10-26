@@ -169,9 +169,11 @@ function CategoryForm({ initial, groups, onCancel, onSave }: CategoryFormProps) 
   }
 
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape from the inputs inside cancels the form; the form itself is not a control
     <form className="cat-form" onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && onCancel()}
       aria-label={initial ? `Edit ${initial.name}` : 'New category'}>
       <label className="field">Name
+        {/* eslint-disable-next-line jsx-a11y/no-autofocus -- the inline category form opens on New/Edit; focus moves to its first field */}
         <input value={d.name} onChange={(e) => set('name', e.target.value)} autoFocus required />
       </label>
       <label className="field">Group
@@ -337,6 +339,7 @@ function RuleForm({ ledger, rule, onDone }: RuleFormProps) {
   }
 
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Escape from the inputs inside cancels the form; the form itself is not a control
     <form className="rule-form" onSubmit={submit} onKeyDown={(e) => e.key === 'Escape' && onDone(false)}
       aria-label={rule ? 'Edit rule' : 'New rule'}>
       <fieldset>
@@ -351,6 +354,7 @@ function RuleForm({ ledger, rule, onDone }: RuleFormProps) {
           </label>
           {d.descriptionOp !== 'any' && (
             <label className="field">Text
+              {/* eslint-disable-next-line jsx-a11y/no-autofocus -- the Text field appears when the user picks contains/regex; focus moves to it */}
               <input value={d.description} onChange={set('description')} placeholder={d.descriptionOp === 'regex' ? '^AMZN.*' : 'AMZN'} autoFocus />
             </label>
           )}
@@ -426,13 +430,13 @@ function RuleForm({ ledger, rule, onDone }: RuleFormProps) {
 
 /** Run every rule over existing transactions, after previewing what would change. */
 function ApplyRules({ ledger }: { ledger: Ledger }) {
-  const { categories, rules } = ledger.state;
+  const { categories, rules, transactions } = ledger.state;
   const [open, setOpen] = useState(false);
   const [includeReviewed, setIncludeReviewed] = useState(false);
   const [msg, setMsg] = useState('');
   const changes = useMemo(
-    () => (open ? previewRules(ledger.state, { includeReviewed }) : []),
-    [open, ledger.state.rules, ledger.state.transactions, includeReviewed],
+    () => (open ? previewRules({ rules, transactions }, { includeReviewed }) : []),
+    [open, rules, transactions, includeReviewed],
   );
   const name = new Map(categories.map((c) => [c.id, c.name]));
   const ruleNo = new Map(rules.map((r, i) => [r.id, i + 1]));
