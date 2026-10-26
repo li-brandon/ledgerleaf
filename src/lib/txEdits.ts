@@ -2,11 +2,12 @@
  * User edits to transactions (category, merchant, notes, reviewed, deleting one) and the
  * "always categorize like this" rules they can create. Pure, so it can be unit tested.
  */
+import { round } from './budget';
 import { ensureCategory } from './categories';
 import { isMerchantOnly, ruleMatches } from './rules';
 import { hashId } from './sync/hash';
 import { dedupeKey } from './sync/merge';
-import type { DeletedTransaction, LedgerState, Rule, Transaction } from './types';
+import type { BalanceSnapshot, DeletedTransaction, LedgerState, Rule, Transaction } from './types';
 
 /** Fields the transaction detail can edit. */
 export interface TxEdit {
@@ -66,16 +67,54 @@ const tombstone = ({ id, accountId, date, description, amount, source, externalI
 /**
  * Delete one transaction, remembering it (see {@link DeletedTransaction}) so a re-sync or a
  * re-import of the same file does not add it back. Import batches keep their record: undoing one
- * finds the row already gone. Returns `state` itself for an unknown id.
+ * finds the row already gone. Balance snapshots that counted it no longer do. Returns `state`
+ * itself for an unknown id.
  */
 export function deleteTransaction(state: LedgerState, id: string): LedgerState {
   const t = state.transactions.find((x) => x.id === id);
   if (!t) return state;
   return {
-    ...state,
+    ...shiftSnapshots(state, t, -1),
     transactions: state.transactions.filter((x) => x !== t),
     deletedTransactions: [...state.deletedTransactions ?? [], tombstone(t)],
   };
+}
+
+/**
+ * Take `t` out of (`sign` -1) or put it back into (+1) the balance snapshots that counted it, when
+ * its account's balance comes from its transactions (see `accountBalance`): such a snapshot is the
+ * sum of the rows the account held when it was written. One an import wrote (its record still
+ * matches) counted the rows no import claims and those the writer or an older import claims;
+ * any other (written before imports were recorded) counted the unclaimed rows dated on or before
+ * it. The imports' records of those snapshots, and of the values from before them, move with them,
+ * so `undoImport` still recognises and restores them.
+ */
+function shiftSnapshots(state: LedgerState, t: Transaction, sign: 1 | -1): LedgerState {
+  const account = state.accounts.find((a) => a.id === t.accountId);
+  if (!account || account.balance !== undefined) return state;
+  const batches = state.importBatches ?? [];
+  const at = new Map(batches.map((b, i) => [b.id, i]));
+  // Batches are newest first; ids of undone ones count as older, like undoImport does.
+  const writtenWith = (i: number) => !t.importBatchIds?.length || t.importBatchIds.some((id) => (at.get(id) ?? Infinity) >= i);
+  const writtenBefore = (s: BalanceSnapshot) => !t.importBatchIds?.length && t.date <= s.date;
+  const shift = <S extends { balance: number }>(s: S): S => ({ ...s, balance: round(s.balance + sign * t.amount) });
+  const mine = (s: { accountId: string }) => s.accountId === t.accountId;
+
+  const balanceSnapshots = state.balanceSnapshots.map((s) => {
+    if (!mine(s)) return s;
+    const i = batches.findIndex((b) => b.snapshots?.some((w) => mine(w) && w.date === s.date));
+    const w = batches[i]?.snapshots?.find((x) => mine(x) && x.date === s.date);
+    return (w?.balance === s.balance ? writtenWith(i) : writtenBefore(s)) ? shift(s) : s;
+  });
+  const importBatches = state.importBatches?.map((b, i) => (!b.snapshots?.some(mine) ? b : {
+    ...b,
+    snapshots: b.snapshots.map((w) => {
+      if (!mine(w)) return w;
+      const next = writtenWith(i) ? shift(w) : w;
+      return w.before && writtenBefore(w.before) ? { ...next, before: shift(w.before) } : next;
+    }),
+  }));
+  return { ...state, balanceSnapshots, ...(importBatches && { importBatches }) };
 }
 
 /**
@@ -100,7 +139,7 @@ export function restoreTransaction(state: LedgerState, t: Transaction): LedgerSt
   const transactions = [...next.transactions];
   const at = transactions.findIndex((x) => x.date < t.date);
   transactions.splice(at < 0 ? transactions.length : at, 0, row);
-  return { ...next, transactions };
+  return { ...shiftSnapshots(next, row, 1), transactions };
 }
 
 /** Mark every transaction in `ids` reviewed (or not). */

@@ -121,7 +121,10 @@ export default function Transactions({ ledger, params }: PageProps) {
   };
   const undoDelete = (t: Transaction) => {
     setToast(undefined);
-    ledger.restoreTransaction(t).catch((e) => showToast({ text: e instanceof Error ? e.message : String(e), error: true }));
+    const why = ledger.state.accounts.some((a) => a.id === t.accountId) ? 'its import was undone' : 'its account was removed';
+    ledger.restoreTransaction(t)
+      .then((restored) => restored || showToast({ text: `Couldn't restore ${t.description}: ${why}.`, error: true }))
+      .catch((e) => showToast({ text: e instanceof Error ? e.message : String(e), error: true }));
   };
   const pickAll = (on: boolean) => setChecked(on ? new Set(shownIds) : new Set());
   const bulkCategory = (name: string) => name && ledger.setCategory(picked, name);

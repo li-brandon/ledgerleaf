@@ -42,7 +42,7 @@ it('deletes a transaction and saves it with its tombstone before showing it, the
   expect(after.transactions.map((t) => t.description)).toEqual(['Rent']);
   expect(after.deletedTransactions).toEqual([expect.objectContaining({ id: tea.id, source: 'csv', externalId: tea.externalId })]);
 
-  await act(() => result.current.restoreTransaction(tea));
+  await act(async () => expect(await result.current.restoreTransaction(tea)).toBe(true));
   expect(result.current.state.transactions).toEqual(before.transactions);
   expect((await stored()).transactions).toEqual(before.transactions);
   expect((await stored()).deletedTransactions).toBeUndefined();

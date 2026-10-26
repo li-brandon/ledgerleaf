@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { makeBackup, parseBackup, restoreBackup } from '../../db/backup';
 import { createMemoryRepository, readLedger, saveLedger } from '../../db';
 import { detectMapping, matchExisting, readCsvTable, withImportMapping } from '../csvMapping';
-import { monthlySpend } from '../insights';
+import { netWorth } from '../accounts';
+import { accountBalance, monthlySpend } from '../insights';
 import { batchTransactionCount, newBatchId, recordImport, undoImport } from '../importBatches';
 import { emptyLedger, migrate } from '../migrate';
+import { netWorthTrend } from '../overview';
 import { detectRecurring } from '../recurring';
-import { CsvImportProvider, applySync, fetchSync } from '../sync';
+import { CsvImportProvider, MockProvider, applySync, fetchSync } from '../sync';
 import { deleteTransaction, editTransaction, restoreTransaction } from '../txEdits';
 import type { Account, LedgerState, Transaction } from '../types';
 
@@ -103,6 +105,18 @@ describe('a deleted transaction stays deleted', () => {
     const ids = thrice.state.transactions.filter((t) => t.description === 'Corner Grocer').map((t) => t.id);
     expect(ids).toHaveLength(2);
     expect(ids).not.toContain(a.id);
+  });
+
+  it('a row matching both a held transaction and a deleted twin pairs with the held one', async () => {
+    const twice = `${FILE}\n2026-10-13,Corner Grocer,-42.10,Groceries`;
+    const first = await importCsv(emptyLedger('2026-10'), twice);
+    const [a, b] = first.state.transactions.filter((t) => t.description === 'Corner Grocer');
+    const state = deleteTransaction(first.state, a.id);
+    const mapping = detectMapping(readCsvTable(FILE).headers);
+    const mapped = await new CsvImportProvider(FILE, { mapping, accountId: everyday.id }).fetchTransactions();
+    const m = matchExisting(mapped, state.transactions, state.deletedTransactions);
+    expect(m.transactions.find((t) => t.description === 'Corner Grocer')?.id).toBe(b.id);
+    expect(m.deleted.size).toBe(0);
   });
 
   it('a re-sync of the provider does not add it back, even with changed fields', () => {
@@ -244,5 +258,116 @@ describe('persisting tombstones', () => {
     });
     expect(out.deletedTransactions).toEqual([good]);
     expect(migrate({ version: 2, deletedTransactions: 'nope' })).not.toHaveProperty('deletedTransactions');
+  });
+});
+
+describe('balance snapshots of an account whose balance comes from its transactions', () => {
+  const MORE = 'Date,Description,Amount\n2026-10-13,Corner Grocer,-42.10\n2026-10-15,Bakery,-6.50';
+  async function demo() {
+    const p = new MockProvider(DAY1);
+    return applySync(emptyLedger('2026-10'), p.id, await fetchSync(p, emptyLedger('2026-10')), DAY1).state;
+  }
+  const hero = (s: LedgerState) => netWorth(s.accounts, s.transactions).netWorth;
+  const trend = (s: LedgerState) => netWorthTrend(s.accounts, s.balanceSnapshots, '2026-10', 12).at(-1)?.total;
+  const latest = (s: LedgerState) =>
+    s.balanceSnapshots.filter((x) => x.accountId === everyday.id).sort((a, b) => a.date.localeCompare(b.date)).at(-1)?.balance;
+  /** The Dashboard trend agrees with the hero net worth, and the account's latest snapshot with its balance. */
+  function expectConsistent(s: LedgerState) {
+    expect(trend(s)).toBe(hero(s));
+    const account = s.accounts.find((a) => a.id === everyday.id);
+    if (account) expect(latest(s)).toBe(accountBalance(account, s.transactions));
+  }
+
+  it('drop a deleted row and take it back on restore', async () => {
+    const { state } = await importCsv(await demo(), FILE);
+    const paycheck = find(state, 'Paycheck')!;
+    const deleted = deleteTransaction(state, paycheck.id);
+    expect(hero(deleted)).toBe(63694.39);
+    expect(trend(deleted)).toBe(63694.39);
+    expect(latest(deleted)).toBe(-72.1);
+    expectConsistent(deleted);
+    const restored = restoreTransaction(deleted, paycheck);
+    expectConsistent(restored);
+    expect(restored.balanceSnapshots).toEqual(state.balanceSnapshots);
+    expect(restored.importBatches).toEqual(state.importBatches);
+  });
+
+  for (const [when, day] of [['the same day', DAY1], ['a day later', DAY2]] as const) {
+    describe(`with a second import ${when}`, () => {
+      async function twoImports() {
+        const a = await importCsv(await demo(), FILE);
+        const b = await importCsv(a.state, MORE, day);
+        return { state: b.state, a: a.id, b: b.id };
+      }
+
+      for (const undo of ['a', 'b'] as const) {
+        it(`delete, undo import ${undo.toUpperCase()}, then Undo the delete`, async () => {
+          const imports = await twoImports();
+          const t = grocer(imports.state);
+          const deleted = deleteTransaction(imports.state, t.id);
+          expectConsistent(deleted);
+          const undone = undoImport(deleted, imports[undo]);
+          expectConsistent(undone);
+          const restored = restoreTransaction(undone, t);
+          expect(grocer(restored)).toBeDefined();
+          expectConsistent(restored);
+          // The other import still undoes cleanly.
+          expectConsistent(undoImport(restored, imports[undo === 'a' ? 'b' : 'a']));
+        });
+
+        it(`delete, Undo the delete, then undo import ${undo.toUpperCase()}`, async () => {
+          const imports = await twoImports();
+          const t = grocer(imports.state);
+          const restored = restoreTransaction(deleteTransaction(imports.state, t.id), t);
+          expect(restored.balanceSnapshots).toEqual(imports.state.balanceSnapshots);
+          expect(restored.importBatches).toEqual(imports.state.importBatches);
+          const undone = undoImport(restored, imports[undo]);
+          expect(undone).toEqual(undoImport(imports.state, imports[undo]));
+          expectConsistent(undone);
+        });
+      }
+    });
+  }
+
+  it('leave a snapshot written before the row was imported alone', async () => {
+    const a = await importCsv(await demo(), FILE);
+    const b = await importCsv(a.state, 'Date,Description,Amount\n2026-10-21,Bakery,-6.50', DAY2);
+    const deleted = deleteTransaction(b.state, find(b.state, 'Bakery')!.id);
+    const mine = (s: LedgerState) => s.balanceSnapshots.filter((x) => x.accountId === everyday.id).map((x) => [x.date, x.balance]);
+    expect(mine(b.state)).toEqual([['2026-10-20', 2427.9], ['2026-10-21', 2421.4]]);
+    expect(mine(deleted)).toEqual([['2026-10-20', 2427.9], ['2026-10-21', 2427.9]]);
+    expectConsistent(deleted);
+  });
+
+  it('without an import record, change only the snapshots dated on or after the row', () => {
+    const t: Transaction = { id: 'x', date: '2026-10-13', description: 'X', amount: -10, category: 'Other', accountId: everyday.id };
+    const state: LedgerState = {
+      ...emptyLedger('2026-10'), accounts: [everyday], transactions: [t],
+      balanceSnapshots: [{ accountId: everyday.id, date: '2026-10-01', balance: 0 }, { accountId: everyday.id, date: '2026-10-13', balance: -10 }],
+    };
+    expect(deleteTransaction(state, 'x').balanceSnapshots.map((x) => x.balance)).toEqual([0, 0]);
+  });
+
+  it('adjust the value from before an import, so undoing it hands back a snapshot without the row', async () => {
+    // An import from before batches were recorded, then a recorded one the same day.
+    const mapping = detectMapping(readCsvTable(FILE).headers);
+    const base = await demo();
+    const p = new CsvImportProvider(FILE, { mapping, accountId: everyday.id, newAccount: everyday });
+    const untagged = applySync(base, p.id, await fetchSync(p, base), DAY1).state;
+    const { state, id } = await importCsv(untagged, MORE);
+    expect(state.importBatches?.[0].snapshots?.[0].before?.balance).toBe(2427.9);
+    const deleted = deleteTransaction(state, find(state, 'Paycheck')!.id);
+    expectConsistent(deleted);
+    expectConsistent(undoImport(deleted, id));
+  });
+
+  it('leave an account with a reported balance alone', async () => {
+    const { state } = await importCsv(await demo(), FILE);
+    const t = state.transactions.find((x) => x.accountId !== everyday.id)!;
+    expect(state.accounts.find((a) => a.id === t.accountId)!.balance).toBeDefined();
+    const deleted = deleteTransaction(state, t.id);
+    expect(deleted.balanceSnapshots).toBe(state.balanceSnapshots);
+    expect(deleted.importBatches).toBe(state.importBatches);
+    expect(restoreTransaction(deleted, t).balanceSnapshots).toBe(state.balanceSnapshots);
   });
 });

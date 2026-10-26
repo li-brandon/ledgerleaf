@@ -2,6 +2,9 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DB_NAME, openIdbRepository, readLedger, saveLedger } from '../../db';
+import { undoImport } from '../../lib/importBatches';
+import type { LedgerState } from '../../lib/types';
 import { csvLedger, renderApp, stored } from '../../test/app';
 
 const CSV = [
@@ -160,6 +163,7 @@ describe('deleting a transaction', () => {
       expect(after.transactions.find((t) => t.id === payroll.id)).toEqual(payroll);
       expect(after.deletedTransactions).toBeUndefined();
     });
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('the undo toast goes away by itself after a few seconds, and the delete stays', async () => {
@@ -192,5 +196,64 @@ describe('deleting a transaction', () => {
     expect(row('PAYROLL ACME')).toBeInTheDocument();
     expect(screen.queryByText(/^Deleted /)).toBeNull();
     expect(await stored()).toEqual(before);
+  });
+
+  async function deletePayroll(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(row('PAYROLL ACME'));
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await user.click(detail().getByRole('button', { name: 'Delete transaction' }));
+    expect(await screen.findByText('Deleted PAYROLL ACME.')).toBeInTheDocument();
+  }
+
+  it('says so when the undo cannot be saved', async () => {
+    const user = await open();
+    await deletePayroll(user);
+    // Restoring forgets the tombstone, a meta delete.
+    vi.spyOn(IDBObjectStore.prototype, 'delete').mockImplementationOnce(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+    await user.click(within(toast()).getByRole('button', { name: 'Undo' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The transaction could not be restored; nothing was changed.');
+    expect(screen.queryByText(/PAYROLL ACME/, { selector: '.tx-desc' })).toBeNull();
+  });
+
+  /** Another tab changes the stored ledger and tells this one. */
+  async function otherTab(change: (s: LedgerState) => LedgerState) {
+    const repo = await openIdbRepository();
+    const prev = (await readLedger(repo))!;
+    await saveLedger(repo, change(prev), prev);
+    repo.close();
+    const channel = new BroadcastChannel(DB_NAME);
+    channel.postMessage({ type: 'changed' });
+    channel.close();
+  }
+
+  it('says so when the undo cannot bring it back because its import was undone', async () => {
+    const user = userEvent.setup();
+    const ledger = await csvLedger(CSV);
+    const claimed = new Set(['2026-10-02', '2026-10-05']);
+    await renderApp({
+      ...ledger,
+      transactions: ledger.transactions.map((t) => (claimed.has(t.date) ? { ...t, importBatchIds: ['b1'] } : t)),
+      importBatches: [{ id: 'b1', file: 'bank.csv', accountId: 'everyday', rows: 2, at: '2026-10-20T09:00:00.000Z', added: 2 }],
+    }, '#/transactions');
+    await deletePayroll(user);
+    await otherTab((s) => undoImport(s, 'b1'));
+    await waitFor(() => expect(screen.getAllByText(/BLUE BOTTLE/, { selector: '.tx-desc' })).toHaveLength(1));
+
+    await user.click(within(toast()).getByRole('button', { name: 'Undo' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't restore PAYROLL ACME: its import was undone.");
+    expect(screen.queryByText(/PAYROLL ACME/, { selector: '.tx-desc' })).toBeNull();
+    await waitFor(async () => expect((await stored()).deletedTransactions).toBeUndefined());
+  });
+
+  it('says so when the undo cannot bring it back because its account was removed', async () => {
+    const user = await open();
+    await deletePayroll(user);
+    await otherTab((s) => ({ ...s, accounts: [], transactions: [] }));
+    await waitFor(() => expect(screen.queryByText(/BLUE BOTTLE/, { selector: '.tx-desc' })).toBeNull());
+
+    await user.click(within(toast()).getByRole('button', { name: 'Undo' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't restore PAYROLL ACME: its account was removed.");
   });
 });

@@ -248,9 +248,13 @@ export function useLedger(open: (options: OpenOptions) => Promise<Repository> = 
     return prev.transactions.find((t) => t.id === id);
   }, [commitChange]);
 
-  /** Undo {@link deleteTransaction}, against the latest ledger; saved the same way. */
+  /**
+   * Undo {@link deleteTransaction}, against the latest ledger; saved the same way. Resolves to
+   * false when the row could not be put back (its imports were undone or its account removed).
+   */
   const restoreTransaction = useCallback(async (t: Transaction) => {
     await commitChange((s) => restoreTx(s, t), 'The transaction could not be restored; nothing was changed.');
+    return latest.current.transactions.some((x) => x.id === t.id);
   }, [commitChange]);
 
   /** Set the category of one or more transactions; `always` also makes it the rule for the first one's merchant. */
