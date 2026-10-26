@@ -18,8 +18,6 @@ export interface CsvImportOptions {
   accountId: string;
   /** Set when the target account does not exist yet; it is created by the sync. */
   newAccount?: Account;
-  /** ISO 4217 code whose usual decimal separator is used when neither the mapping nor the file shows one. */
-  currency?: string;
 }
 
 interface Parsed {
@@ -53,7 +51,7 @@ export class CsvImportProvider implements SyncProvider {
       return (this.parsed = { ...parseTransactionsCsv(this.text), errors: [] });
     }
     const table = readCsvTable(this.text);
-    const { transactions, errors } = applyMapping(table, o.mapping, o.accountId, o.currency);
+    const { transactions, errors } = applyMapping(table, o.mapping, o.accountId);
     return (this.parsed = { accounts: o.newAccount ? [o.newAccount] : [], transactions, skipped: errors.length, errors, table });
   }
 

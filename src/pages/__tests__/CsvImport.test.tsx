@@ -98,7 +98,7 @@ describe('CSV import flow', () => {
 
   it('flags ambiguous amounts and lets the user choose the separator', async () => {
     const user = userEvent.setup();
-    // CHF has no usual separator, so the currency does not settle "-1,234".
+    // CHF has no usual separator, so no one-click choice is offered.
     await renderApp({ ...emptyLedger(), settings: { ...DEFAULT_SETTINGS, currency: 'CHF' } }, '#/connections');
     const csv = ['Date,Description,Amount', '2026-10-01,Rent,"-1,234"', '2026-10-02,Tea,-3'].join('\n');
     await user.upload(fileInput(), csvFile(csv, 'eu.csv'));
@@ -110,6 +110,7 @@ describe('CSV import flow', () => {
     expect(within(separator).getByRole('option', { name: 'Detect (unclear from the rows)' })).toBeInTheDocument();
     expect(ui.getByText((_, el) => el?.tagName === 'P' && /^1 rows ready to import/.test(el.textContent ?? '')))
       .toHaveTextContent('1 rows ready to import, 1 with errors (first: row 2, Ambiguous amount "-1,234": choose the decimal separator).');
+    expect(ui.queryByRole('button', { name: /for ambiguous rows/ })).toBeNull();
 
     await user.selectOptions(separator, ',');
     expect(ui.getByText('2 rows ready to import.')).toBeInTheDocument();
@@ -124,7 +125,7 @@ describe('CSV import flow', () => {
     expect(ui.getByLabelText('Decimal separator')).toHaveValue(',');
   });
 
-  it('saves the separator the rows show, but not the currency\'s guess, when left on Detect', async () => {
+  it('saves the separator the rows show, and offers the currency\'s one for ambiguous rows without guessing', async () => {
     const user = userEvent.setup();
     await renderApp(undefined, '#/connections');
     const ui = within(card());
@@ -141,16 +142,45 @@ describe('CSV import flow', () => {
     await ui.findByText('us.csv');
     expect(ui.getByLabelText('Account')).toHaveValue('__new__');
     expect(ui.getByLabelText('Decimal separator')).toHaveValue('');
-    expect(within(ui.getByLabelText('Decimal separator')).getByRole('option', { name: 'Detect (Point: 1,234.56, usual for USD)' }))
+    expect(within(ui.getByLabelText('Decimal separator')).getByRole('option', { name: 'Detect (unclear from the rows)' }))
       .toBeInTheDocument();
+    // The display currency (USD) does not settle "-1,500"; it is only offered.
+    expect(ui.getByText((_, el) => el?.tagName === 'P' && /^0 rows ready to import/.test(el.textContent ?? '')))
+      .toHaveTextContent('0 rows ready to import, 2 with errors (first: row 2, Ambiguous amount "-1,500": choose the decimal separator).');
+    await user.click(ui.getByRole('button', { name: 'Use Point: 1,234.56 (usual for USD) for ambiguous rows' }));
+    expect(ui.getByLabelText('Decimal separator')).toHaveValue('.');
     expect(ui.getByText('2 rows ready to import.')).toBeInTheDocument();
+    expect(ui.queryByRole('button', { name: /for ambiguous rows/ })).toBeNull();
     await user.click(ui.getByRole('button', { name: 'Import 2 rows' }));
     await ui.findByRole('status');
 
     const state = await stored();
     expect(state.transactions.map((t) => t.amount).sort((a, b) => a - b)).toEqual([-1500, -1234, -3.5, 3200]);
     expect(state.importMappings?.['csv-eu']).toMatchObject({ decimal: ',' });
-    expect(state.importMappings?.['csv-us']).not.toHaveProperty('decimal');
+    expect(state.importMappings?.['csv-us']).toMatchObject({ decimal: '.' });
+  });
+
+  it('warns when the rows show a different separator from the selected one', async () => {
+    const user = userEvent.setup();
+    await renderApp(undefined, '#/connections');
+    const ui = within(card());
+    await user.upload(fileInput(), csvFile('Date,Description,Amount\n2026-10-01,Tea,"-3,50"', 'eu.csv'));
+    await user.click(await ui.findByRole('button', { name: 'Import 1 rows' }));
+    await ui.findByRole('status');
+
+    // Same layout, so the account's saved ',' is offered, but these rows are written with a point.
+    await user.upload(fileInput(), csvFile('Date,Description,Amount\n2026-10-02,Rent,"-1,234.56"\n2026-10-03,Pay,"1,234"', 'eu2.csv'));
+    await ui.findByText('eu2.csv');
+    expect(ui.getByLabelText('Decimal separator')).toHaveValue(',');
+    expect(ui.getByText(/^This file's amounts look like/))
+      .toHaveTextContent('This file\'s amounts look like Point: 1,234.56, but Comma: 1.234,56 is selected.');
+
+    await user.click(ui.getByRole('button', { name: 'Use Point: 1,234.56' }));
+    expect(ui.getByLabelText('Decimal separator')).toHaveValue('.');
+    expect(ui.queryByText(/^This file's amounts look like/)).toBeNull();
+    await user.click(ui.getByRole('button', { name: 'Import 2 rows' }));
+    await ui.findByRole('status');
+    expect((await stored()).transactions.map((t) => t.amount).sort((a, b) => a - b)).toEqual([-1234.56, -3.5, 1234]);
   });
 
   it('blocks the import until required columns are mapped and the new account is named', async () => {
