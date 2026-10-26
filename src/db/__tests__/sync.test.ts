@@ -38,7 +38,7 @@ describe.each(ADAPTERS)('syncing into %s', (_, open) => {
 
   it('persists the CSV mapping saved with an import', async () => {
     const { repo, initial, persister } = await setup();
-    const text = 'When,What,Out\n10/01/2026,Tea,3.00';
+    const text = 'When,What,Out\n2026-10-01,Tea,3.00';
     const mapping = { date: 'When', description: 'What', debit: 'Out' };
     const account = { id: 'csv-tea', name: 'Tea fund', type: 'checking' as const };
     const p = new CsvImportProvider(text, { mapping, accountId: account.id, newAccount: account });

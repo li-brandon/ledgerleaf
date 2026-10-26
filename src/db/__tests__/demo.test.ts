@@ -17,10 +17,10 @@ async function mixedLedger() {
   let state = await sync(emptyLedger('2026-10'), new MockProvider(now));
   const tea = { id: 'csv-tea', name: 'Tea fund', type: 'checking' as const };
   const mapping = { date: 'When', description: 'What', amount: 'Amount' };
-  state = await sync(state, new CsvImportProvider('When,What,Amount\n10/01/2026,Tea,-3\n10/02/2026,Cake,-5', {
+  state = await sync(state, new CsvImportProvider('When,What,Amount\n2026-10-01,Tea,-3\n2026-10-02,Cake,-5', {
     mapping, accountId: tea.id, newAccount: tea,
   }));
-  state = await sync(state, new CsvImportProvider('When,What,Amount\n10/03/2026,Refund,12', { mapping, accountId: 'demo-checking' }));
+  state = await sync(state, new CsvImportProvider('When,What,Amount\n2026-10-03,Refund,12', { mapping, accountId: 'demo-checking' }));
   return { ...state, importMappings: { 'csv-tea': mapping, 'demo-card': mapping } };
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectDecimal, normalizeDate, parseAmount, parseCsvRows, parseTransactionsCsv, readAmount } from '../csv';
+import { detectDateOrder, detectDecimal, normalizeDate, parseAmount, parseCsvRows, parseTransactionsCsv, readAmount, readDate } from '../csv';
 
 describe('parseCsvRows', () => {
   it('handles quotes, escaped quotes, CRLF and blank lines', () => {
@@ -145,6 +145,63 @@ describe('decimal separators', () => {
     expect(eu.transactions.map((t) => t.amount)).toEqual([-3.5, -1234]);
     const unclear = parseTransactionsCsv('date,description,amount\n2026-01-02,Tea,-3\n2026-01-03,Rent,"-1,234"');
     expect(unclear.transactions.map((t) => t.amount)).toEqual([-3]);
+    expect(unclear.skipped).toBe(1);
+  });
+});
+
+describe('date orders', () => {
+  it.each([
+    ['12/31/2026', 'MDY', '2026-12-31'],
+    ['12.31.2026', 'MDY', '2026-12-31'],
+    ['12-31-26', 'MDY', '2026-12-31'],
+    ['31/12/2026', 'DMY', '2026-12-31'],
+    ['31.12.2026', 'DMY', '2026-12-31'],
+    ['1-2-99', 'DMY', '1999-02-01'],
+    ['2026/12/31', 'YMD', '2026-12-31'],
+    ['2026.12.31', 'YMD', '2026-12-31'],
+    ['2026-12-31', 'YMD', '2026-12-31'],
+  ] as const)('reads %s as %s', (raw, order, iso) => expect(normalizeDate(raw, order)).toBe(iso));
+
+  it('reads year-first and month-name dates in every order, and nothing else outside its order', () => {
+    for (const order of ['MDY', 'DMY', 'YMD'] as const) {
+      expect(normalizeDate('2026-12-31T08:00:00Z', order)).toBe('2026-12-31');
+      expect(normalizeDate('31 Dec 2026', order)).toBe('2026-12-31');
+    }
+    expect(normalizeDate('31.12.2026', 'MDY')).toBeNull();
+    expect(normalizeDate('12/31/2026', 'DMY')).toBeNull();
+    expect(normalizeDate('12/31/2026', 'YMD')).toBeNull();
+    expect(normalizeDate('31/02/2026', 'DMY')).toBeNull();
+  });
+
+  it('reads a date without an order only when every order agrees on it', () => {
+    expect(readDate('01/02/2026')).toBe('ambiguous');
+    expect(readDate('1.2.26')).toBe('ambiguous');
+    expect(readDate('05/05/2026')).toBe('2026-05-05');
+    expect(readDate('13/01/2026')).toBe('2026-01-13');
+    expect(readDate('01/13/2026')).toBe('2026-01-13');
+    expect(readDate('2026-12-31')).toBe('2026-12-31');
+    expect(readDate('31/02/2026')).toBeNull();
+    expect(readDate('01/02/2026', 'DMY')).toBe('2026-02-01');
+  });
+
+  it('detects the one order every telling date agrees with', () => {
+    expect(detectDateOrder(['01/02/2026', '13/01/2026'])).toBe('DMY');
+    expect(detectDateOrder(['31.12.2026'])).toBe('DMY');
+    expect(detectDateOrder(['01/13/2026', '05/05/2026', '3 Oct 2026', ''])).toBe('MDY');
+    // No evidence: ISO dates (they read the same in every order), valid in every order, ambiguous between month and day first, or not a date.
+    expect(detectDateOrder(['2026-01-02', '2026-01-13'])).toBeUndefined();
+    expect(detectDateOrder(['01/02/2026', '05/05/2026', '3 Oct 2026', '31/02/2026', ''])).toBeUndefined();
+    // ISO dates don't contradict a day-first file.
+    expect(detectDateOrder(['13/01/2026', '2026-01-13'])).toBe('DMY');
+    // Conflicting evidence.
+    expect(detectDateOrder(['13/01/2026', '01/13/2026'])).toBeUndefined();
+  });
+
+  it('detects the order in the fixed-column parser and skips ambiguous dates', () => {
+    const eu = parseTransactionsCsv('date,description,amount\n31.12.2026,Tea,-3\n01.02.2026,Rent,-1');
+    expect(eu.transactions.map((t) => t.date)).toEqual(['2026-12-31', '2026-02-01']);
+    const unclear = parseTransactionsCsv('date,description,amount\n05/05/2026,Tea,-3\n01/02/2026,Rent,-1');
+    expect(unclear.transactions.map((t) => t.date)).toEqual(['2026-05-05']);
     expect(unclear.skipped).toBe(1);
   });
 });

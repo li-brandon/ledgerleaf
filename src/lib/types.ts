@@ -134,9 +134,14 @@ export interface CsvMapping {
    * "1.234,56"). When unset it is detected from the file's amounts.
    */
   decimal?: DecimalSeparator;
+  /** Order of month, day and year in numeric dates. When unset it is detected from the file's dates. */
+  dateOrder?: DateOrder;
 }
 
 export type DecimalSeparator = '.' | ',';
+
+/** Month first (12/31/2026), day first (31/12/2026) or year first (2026-12-31). */
+export type DateOrder = 'MDY' | 'DMY' | 'YMD';
 
 /** How often a recurring charge repeats. */
 export type Cadence = 'weekly' | 'monthly' | 'yearly';

@@ -118,6 +118,21 @@ describe('migrate', () => {
     expect(migrate(JSON.parse(JSON.stringify(s)), MONTH)).toEqual(s);
   });
 
+  it('keeps a CSV mapping\'s date order through a round trip and drops invalid ones', () => {
+    const s = migrate({
+      ...migrate(v1, MONTH),
+      importMappings: {
+        eu: { date: 'Datum', description: 'Text', amount: 'Belopp', dateOrder: 'DMY' },
+        bad: { date: 'Date', description: 'Memo', amount: 'Amount', dateOrder: 'dmy' },
+      },
+    } as never, MONTH);
+    expect(s.importMappings).toEqual({
+      eu: { date: 'Datum', description: 'Text', amount: 'Belopp', dateOrder: 'DMY' },
+      bad: { date: 'Date', description: 'Memo', amount: 'Amount' },
+    });
+    expect(migrate(JSON.parse(JSON.stringify(s)), MONTH)).toEqual(s);
+  });
+
   it('fills fields missing from stored categories and keeps the exclude flag the user set', () => {
     const base = migrate(v1, MONTH);
     const s = migrate({

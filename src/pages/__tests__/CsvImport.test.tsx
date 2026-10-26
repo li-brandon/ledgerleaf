@@ -6,9 +6,10 @@ import { emptyLedger } from '../../lib/migrate';
 import { DEFAULT_SETTINGS } from '../../lib/settings';
 import { renderApp, stored } from '../../test/app';
 
+// "10/13/2026" shows the dates are month first.
 const BANK_CSV = [
   'Date,Description,Amount,Category',
-  '10/01/2026,Corner Grocer,-42.10,Groceries',
+  '10/13/2026,Corner Grocer,-42.10,Groceries',
   '10/02/2026,Paycheck,2500.00,Income',
   '10/03/2026,Bus pass,-30,Transport',
 ].join('\n');
@@ -30,7 +31,7 @@ describe('CSV import flow', () => {
     expect(ui.getByText('Detected from the header row')).toBeInTheDocument();
     // The account name comes from the file name; columns are detected from the headers.
     expect(ui.getByLabelText('Name')).toHaveValue('fernway checking');
-    expect(ui.getByLabelText(/^Date/)).toHaveValue('Date');
+    expect(ui.getByLabelText(/^Date$/)).toHaveValue('Date');
     expect(ui.getByLabelText(/^Description/)).toHaveValue('Description');
     expect(ui.getByLabelText(/^Amount$/)).toHaveValue('Amount');
     expect(ui.getByLabelText(/^Category/)).toHaveValue('Category');
@@ -50,11 +51,11 @@ describe('CSV import flow', () => {
     const state = await stored();
     expect(state.accounts).toEqual([expect.objectContaining({ id: 'csv-everyday', name: 'Everyday', type: 'savings' })]);
     expect(state.transactions.map((t) => [t.date, t.description, t.amount, t.category]).sort()).toEqual([
-      ['2026-10-01', 'Corner Grocer', -42.1, 'Groceries'],
       ['2026-10-02', 'Paycheck', 2500, 'Income'],
       ['2026-10-03', 'Bus pass', -30, 'Transport'],
+      ['2026-10-13', 'Corner Grocer', -42.1, 'Groceries'],
     ]);
-    expect(state.importMappings?.['csv-everyday']).toMatchObject({ date: 'Date', amount: 'Amount', category: 'Category' });
+    expect(state.importMappings?.['csv-everyday']).toMatchObject({ date: 'Date', amount: 'Amount', category: 'Category', dateOrder: 'MDY' });
   });
 
   it('reuses the saved mapping for a known layout and skips rows already imported', async () => {
@@ -111,6 +112,7 @@ describe('CSV import flow', () => {
     expect(ui.getByText((_, el) => el?.tagName === 'P' && /^1 rows ready to import/.test(el.textContent ?? '')))
       .toHaveTextContent('1 rows ready to import, 1 with errors (first: row 2, Ambiguous amount "-1,234": choose the decimal separator).');
     expect(ui.queryByRole('button', { name: /for ambiguous rows/ })).toBeNull();
+    expect(ui.queryByRole('button', { name: /for ambiguous dates/ })).toBeNull();
 
     await user.selectOptions(separator, ',');
     expect(ui.getByText('2 rows ready to import.')).toBeInTheDocument();
@@ -207,18 +209,87 @@ describe('CSV import flow', () => {
     expect((await stored()).transactions.map((t) => t.amount).sort((a, b) => a - b)).toEqual([-1234.56, -3.5, 1234]);
   });
 
+  it('detects dotted day-first dates and saves the order with the import', async () => {
+    const user = userEvent.setup();
+    await renderApp(undefined, '#/connections');
+    const ui = within(card());
+    await user.upload(fileInput(), csvFile('Date,Description,Amount\n31.12.2026,Rent,-1000\n01.02.2026,Tea,-3', 'eu.csv'));
+    await ui.findByText('eu.csv');
+    const order = ui.getByLabelText('Date order');
+    expect(order).toHaveValue('');
+    expect(within(order).getByRole('option', { name: 'Detect (Day first: 31/12/2026)' })).toBeInTheDocument();
+    await user.click(ui.getByRole('button', { name: 'Import 2 rows' }));
+    await ui.findByRole('status');
+    const state = await stored();
+    expect(state.transactions.map((t) => t.date).sort()).toEqual(['2026-02-01', '2026-12-31']);
+    expect(state.importMappings?.['csv-eu']).toMatchObject({ dateOrder: 'DMY' });
+  });
+
+  it('flags ambiguous dates and lets the user choose the order with one click', async () => {
+    const user = userEvent.setup();
+    await renderApp(undefined, '#/connections');
+    const ui = within(card());
+    await user.upload(fileInput(), csvFile('Date,Description,Amount\n01/02/2026,Rent,-1000\n03/04/2026,Tea,-3', 'eu.csv'));
+    await ui.findByText('eu.csv');
+    expect(within(ui.getByLabelText('Date order')).getByRole('option', { name: 'Detect (unclear from the rows)' })).toBeInTheDocument();
+    expect(ui.getByText((_, el) => el?.tagName === 'P' && /^0 rows ready to import/.test(el.textContent ?? '')))
+      .toHaveTextContent('0 rows ready to import, 2 with errors (first: row 2, Ambiguous date "01/02/2026": choose the date order).');
+    // Only the date is ambiguous, so no decimal separator is offered.
+    expect(ui.queryByRole('button', { name: /for ambiguous rows/ })).toBeNull();
+    expect(ui.getByRole('button', { name: 'Use Month first: 12/31/2026 for ambiguous dates' })).toBeInTheDocument();
+
+    await user.click(ui.getByRole('button', { name: 'Use Day first: 31/12/2026 for ambiguous dates' }));
+    expect(ui.getByLabelText('Date order')).toHaveValue('DMY');
+    expect(ui.getByText('2 rows ready to import.')).toBeInTheDocument();
+    expect(ui.queryByRole('button', { name: /for ambiguous dates/ })).toBeNull();
+    await user.click(ui.getByRole('button', { name: 'Import 2 rows' }));
+    await ui.findByRole('status');
+    const state = await stored();
+    expect(state.transactions.map((t) => t.date).sort()).toEqual(['2026-02-01', '2026-04-03']);
+    expect(state.importMappings?.['csv-eu']).toMatchObject({ dateOrder: 'DMY' });
+  });
+
+  it('does not let a saved date order settle ambiguous dates until it is confirmed, and warns when the rows disagree', async () => {
+    const user = userEvent.setup();
+    await renderApp({
+      ...emptyLedger(),
+      accounts: [{ id: 'giro', name: 'Giro', type: 'checking' }],
+      importMappings: { giro: { date: 'Date', description: 'Description', amount: 'Amount', dateOrder: 'DMY' } },
+    }, '#/connections');
+    const ui = within(card());
+    await user.upload(fileInput(), csvFile('Date,Description,Amount\n01/02/2026,Pay,1\n03/04/2026,Rent,-2', 'giro.csv'));
+    await ui.findByText('giro.csv');
+    expect(ui.getByLabelText('Date order')).toHaveValue('DMY');
+    expect(ui.getByText(/^0 rows ready to import/)).toBeInTheDocument();
+    expect(ui.getByRole('button', { name: 'Use Month first: 12/31/2026 for ambiguous dates' })).toBeInTheDocument();
+    await user.click(ui.getByRole('button', { name: 'Use Day first: 31/12/2026 (saved for this account) for ambiguous dates' }));
+    expect(ui.getByText('2 rows ready to import.')).toBeInTheDocument();
+    await user.click(ui.getByRole('button', { name: 'Import 2 rows' }));
+    await ui.findByRole('status');
+    expect((await stored()).transactions.map((t) => t.date).sort()).toEqual(['2026-02-01', '2026-04-03']);
+
+    await user.upload(fileInput(), csvFile('Date,Description,Amount\n12/31/2026,Cake,-4', 'us.csv'));
+    await ui.findByText('us.csv');
+    expect(ui.getByText(/^This file's dates look like/))
+      .toHaveTextContent('This file\'s dates look like Month first: 12/31/2026, but Day first: 31/12/2026 is selected.');
+    await user.click(ui.getByRole('button', { name: 'Use Month first: 12/31/2026' }));
+    expect(ui.getByLabelText('Date order')).toHaveValue('MDY');
+    expect(ui.queryByText(/^This file's dates look like/)).toBeNull();
+    expect(ui.getByText('1 rows ready to import.')).toBeInTheDocument();
+  });
+
   it('blocks the import until required columns are mapped and the new account is named', async () => {
     const user = userEvent.setup();
     await renderApp(undefined, '#/connections');
-    await user.upload(fileInput(), csvFile('When,What,How much\n10/01/2026,Tea,-3'));
+    await user.upload(fileInput(), csvFile('When,What,How much\n10/13/2026,Tea,-3'));
     const ui = within(card());
     await ui.findByText('fernway_checking.csv');
 
     const importBtn = () => ui.getByRole('button', { name: /^Import/ });
-    await user.selectOptions(ui.getByLabelText(/^Date/), '');
+    await user.selectOptions(ui.getByLabelText(/^Date$/), '');
     expect(ui.getByRole('alert')).toHaveTextContent('Choose the column that holds the date.');
     expect(importBtn()).toBeDisabled();
-    await user.selectOptions(ui.getByLabelText(/^Date/), 'When');
+    await user.selectOptions(ui.getByLabelText(/^Date$/), 'When');
     await user.selectOptions(ui.getByLabelText(/^Description/), 'What');
     // No amount column was recognised, so it starts as separate debit/credit columns.
     expect(ui.getByRole('alert')).toHaveTextContent('Choose a debit or credit column.');
