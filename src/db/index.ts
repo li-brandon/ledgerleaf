@@ -6,7 +6,7 @@ export * from './repository';
 export { DB_NAME, openIdbRepository } from './indexeddb';
 export { createMemoryRepository } from './memory';
 export { LEGACY_KEYS, diffLedger, loadLedger, readLedger, saveLedger } from './ledger';
-export { createPersister, type Persister } from './persister';
+export { createPersister, type Persister, type SaveStatus } from './persister';
 export { clearDemoData, demoCounts, hasDemoData, withoutDemo, type DemoCounts } from './demo';
 
 /** The app's repository: IndexedDB, or an in-memory stand-in (data lost on reload) where it is unavailable. */

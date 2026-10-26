@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { diffLedger, loadLedger, readLedger, saveLedger } from '../ledger';
-import { createPersister } from '../persister';
+import { createPersister, type SaveStatus } from '../persister';
 import { V1_KEY, V2_KEY, emptyLedger, migrate, type LedgerStateV1 } from '../../lib/migrate';
 import { applySync } from '../../lib/sync';
 import { addMerchantRule, editTransaction, setReviewed } from '../../lib/txEdits';
@@ -216,5 +216,115 @@ describe('createPersister', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe('save status', () => {
+    const quota = new Error('quota');
+
+    async function setup() {
+      const repo = await ADAPTERS[0][1]();
+      const initial = sample();
+      await saveLedger(repo, initial);
+      const apply = vi.spyOn(repo, 'apply');
+      const statuses: SaveStatus[] = [];
+      const onError = vi.fn();
+      const p = createPersister(repo, initial, 100, onError, (s) => statuses.push(s));
+      return { repo, initial, apply, statuses, onError, p };
+    }
+
+    beforeEach(() => { vi.useFakeTimers(); });
+    afterEach(() => { vi.useRealTimers(); });
+
+    it('reports a failed write and keeps the last good save as the diff base, so the next write has every edit', async () => {
+      const { repo, initial, apply, statuses, onError, p } = await setup();
+      apply.mockRejectedValueOnce(quota);
+
+      const a = { ...initial, rules: [] };
+      p.schedule(a);
+      await vi.advanceTimersByTimeAsync(100);
+      await p.flush();
+      expect(statuses).toEqual([{ state: 'saving' }, { state: 'failed', error: quota }]);
+      expect(onError).toHaveBeenCalledWith(quota);
+      expect(await readLedger(repo)).toEqual(migrate(initial));
+
+      const b = { ...a, accounts: [] };
+      p.schedule(b);
+      expect(statuses.at(-1)).toEqual({ state: 'saving' });
+      await vi.advanceTimersByTimeAsync(100);
+      await p.flush();
+      expect(statuses.slice(2)).toEqual([{ state: 'saving' }, { state: 'saved' }]);
+      expect(apply.mock.calls[1][0].delete).toEqual({ accounts: ['acc-1'], rules: ['r1'] });
+      expect(await readLedger(repo)).toEqual(migrate(b));
+    });
+
+    it('retries the latest state at once after a failure', async () => {
+      const { repo, initial, apply, statuses, p } = await setup();
+      apply.mockRejectedValueOnce(quota);
+      const a = { ...initial, rules: [] };
+      p.schedule(a);
+      await p.flush();
+      expect(statuses.at(-1)).toEqual({ state: 'failed', error: quota });
+
+      await p.retry();
+      expect(statuses).toEqual([
+        { state: 'saving' }, { state: 'failed', error: quota }, { state: 'saving' }, { state: 'saved' },
+      ]);
+      expect(apply).toHaveBeenCalledTimes(2);
+      expect(await readLedger(repo)).toEqual(migrate(a));
+
+      await p.retry();
+      expect(apply).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not report saved while a newer state is queued', async () => {
+      const { repo, initial, statuses, p } = await setup();
+      const a = { ...initial, rules: [] };
+      const b = { ...a, accounts: [] };
+      p.schedule(a);
+      const first = p.flush();
+      p.schedule(b);
+      await first;
+      expect(await readLedger(repo)).toEqual(migrate(a));
+      expect(statuses).toEqual([{ state: 'saving' }]);
+
+      await vi.advanceTimersByTimeAsync(100);
+      await p.flush();
+      expect(statuses).toEqual([{ state: 'saving' }, { state: 'saved' }]);
+      expect(await readLedger(repo)).toEqual(migrate(b));
+    });
+
+    it('counts a commit as saving, and a failed one is not retried', async () => {
+      const { repo, initial, apply, statuses, p } = await setup();
+      apply.mockRejectedValueOnce(quota);
+      const synced = { ...initial, lastSync: '2026-10-21T08:00:00.000Z' };
+      const commit = p.commit(synced);
+      expect(statuses).toEqual([{ state: 'saving' }]);
+      await expect(commit).rejects.toBe(quota);
+      await p.flush();
+      expect(statuses).toEqual([{ state: 'saving' }, { state: 'saved' }]);
+
+      await p.retry();
+      expect(apply).toHaveBeenCalledTimes(1);
+      expect(await readLedger(repo)).toEqual(migrate(initial));
+
+      await p.commit(synced);
+      expect(await readLedger(repo)).toEqual(migrate(synced));
+      expect(statuses.slice(2)).toEqual([{ state: 'saving' }, { state: 'saved' }]);
+    });
+
+    it('stays unsaved when a failed commit superseded a queued edit, until it is queued again', async () => {
+      const { repo, initial, apply, statuses, p } = await setup();
+      apply.mockRejectedValueOnce(quota);
+      const a = { ...initial, rules: [] };
+      p.schedule(a);
+      await expect(p.commit({ ...a, lastSync: '2026-10-21T08:00:00.000Z' })).rejects.toBe(quota);
+      await p.flush();
+      expect(statuses).toEqual([{ state: 'saving' }]);
+
+      p.schedule(a);
+      await p.flush();
+      expect(statuses).toEqual([{ state: 'saving' }, { state: 'saved' }]);
+      expect(await readLedger(repo)).toEqual(migrate(a));
+    });
   });
 });
