@@ -166,3 +166,7 @@ src/
   test/                      shared test helpers
   **/__tests__/              Vitest tests next to the code they cover
 ```
+
+## Contributing
+
+Changes land on `main` only through pull requests: one branch per Linear issue, a PR using the template, and a squash-merge once CI is green. No direct pushes to `main`. See [CONTRIBUTING.md](CONTRIBUTING.md) for branch and title conventions and the checks to run locally; agents should also read [AGENTS.md](AGENTS.md).
