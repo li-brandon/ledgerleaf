@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeDate, parseAmount, parseCsvRows, parseTransactionsCsv } from '../csv';
+import { detectDecimal, normalizeDate, parseAmount, parseCsvRows, parseTransactionsCsv, readAmount } from '../csv';
 
 describe('parseCsvRows', () => {
   it('handles quotes, escaped quotes, CRLF and blank lines', () => {
@@ -66,12 +66,87 @@ describe('field parsers', () => {
     ['($1,000.00)', -1000],
     ['€ 9.99', 9.99],
     ['£1,000', 1000],
+    ['¥1,000.50', 1000.5],
     ['12.50 USD', 12.5],
     ['1,234.56-', -1234.56],
     ['+3', 3],
     ['.5', 0.5],
   ])('parses %s', (raw, n) => expect(parseAmount(raw)).toBe(n));
   it.each(['', '$', '()', '1.2.3', '12abc'])('rejects %j', (raw) => expect(parseAmount(raw)).toBeNull());
+});
+
+describe('decimal separators', () => {
+  it.each([
+    ['12,50', 12.5],
+    ['1.234,56', 1234.56],
+    ['-1.234.567,8', -1234567.8],
+    ['1 234,56 €', 1234.56],
+    ['(12,50)', -12.5],
+    ['1.234', 1234],
+  ])('reads %s with a decimal comma', (raw, n) => expect(parseAmount(raw, ',')).toBe(n));
+  it.each(['1,234.56', '12.50', '1.23.4', '12,5,0'])('rejects %j with a decimal comma', (raw) => expect(parseAmount(raw, ',')).toBeNull());
+  it.each(['12,50', '1.234,56', '1,23', '1,23,45', ',5'])('rejects %j with a decimal point', (raw) => expect(parseAmount(raw)).toBeNull());
+
+  it('reads Indian lakh grouping with a decimal point', () => {
+    expect(parseAmount('1,23,456.78')).toBe(123456.78);
+    expect(parseAmount('-12,34,567')).toBe(-1234567);
+    expect(readAmount('1,23,456.78')).toBe(123456.78);
+    for (const raw of ['01,23,456', '1,2,345', '1,23,4567', '1.23.456,78']) expect(readAmount(raw)).toBeNull();
+  });
+
+  it('accepts spaces grouping thousands in threes but rejects inconsistent or mixed grouping', () => {
+    expect(parseAmount('1 234,56', ',')).toBe(1234.56);
+    expect(parseAmount('1 234 567,8', ',')).toBe(1234567.8);
+    expect(parseAmount('-1 234,56 SEK', ',')).toBe(-1234.56);
+    expect(parseAmount('SEK 12,50', ',')).toBe(12.5);
+    expect(parseAmount('12.00 USD')).toBe(12);
+    expect(parseAmount('- $ 5')).toBe(-5);
+    for (const raw of ['12 34,56', '1 234.567,89', '1 2345', '1,234 567.00']) expect(readAmount(raw)).toBeNull();
+  });
+
+  it.each([
+    ['−12.50', -12.5], ['–12.50', -12.5], ['‒12.50', -12.5], ['﹣12.50', -12.5], ['－12.50', -12.5], ['12.50−', -12.5],
+    ['(12.50)', -12.5], ['1,234.56', 1234.56],
+  ])('normalizes minus signs and reads %s', (raw, n) => expect(parseAmount(raw)).toBe(n));
+
+  it('rounds to cents, halves away from zero', () => {
+    expect(parseAmount('1.005')).toBe(1.01);
+    expect(parseAmount('-1.005')).toBe(-1.01);
+    expect(parseAmount('12.3449')).toBe(12.34);
+    expect(parseAmount('0,125', ',')).toBe(0.13);
+    expect(parseAmount('-0.001')).toBe(0);
+  });
+
+  it('reads a value without a known separator only when it has one meaning', () => {
+    expect(readAmount('12,50')).toBe(12.5);
+    expect(readAmount('1.234,56')).toBe(1234.56);
+    expect(readAmount('1,234.56')).toBe(1234.56);
+    expect(readAmount('−12.50')).toBe(-12.5);
+    expect(readAmount('1234')).toBe(1234);
+    expect(readAmount('1,234')).toBe('ambiguous');
+    expect(readAmount('1.234')).toBe('ambiguous');
+    expect(readAmount('1,234', '.')).toBe(1234);
+    expect(readAmount('1,234', ',')).toBe(1.23);
+    expect(readAmount('abc')).toBeNull();
+  });
+
+  it('detects the separator a value can only be read with, unless values disagree', () => {
+    expect(detectDecimal(['1,234', '12,50'])).toBe(',');
+    expect(detectDecimal(['1.234', '1.234.567'])).toBe(',');
+    expect(detectDecimal(['1,234', '-6.25'])).toBe('.');
+    expect(detectDecimal(['0,123'])).toBe(',');
+    expect(detectDecimal(['12.3456'])).toBe('.');
+    expect(detectDecimal(['1,234', '1.234', '12', ''])).toBeUndefined();
+    expect(detectDecimal(['12,50', '12.50'])).toBeUndefined();
+  });
+
+  it('applies the detected separator in the fixed-column parser and skips ambiguous amounts', () => {
+    const eu = parseTransactionsCsv('date,description,amount\n2026-01-02,Tea,"-3,50"\n2026-01-03,Rent,"-1.234"');
+    expect(eu.transactions.map((t) => t.amount)).toEqual([-3.5, -1234]);
+    const unclear = parseTransactionsCsv('date,description,amount\n2026-01-02,Tea,-3\n2026-01-03,Rent,"-1,234"');
+    expect(unclear.transactions.map((t) => t.amount)).toEqual([-3]);
+    expect(unclear.skipped).toBe(1);
+  });
 });
 
 describe('parseTransactionsCsv', () => {

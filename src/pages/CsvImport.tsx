@@ -1,9 +1,10 @@
 import { useMemo, useState, type DragEvent } from 'react';
 import { slug } from '../lib/csv';
 import {
-  FIELD_LABEL, applyMapping, errorRowsCsv, mappingFor, mappingProblem, readCsvTable, withImportMapping,
-  type CsvMapping, type CsvTable, type MappingField, type RowError,
+  FIELD_LABEL, applyMapping, currencyDecimal, detectSeparator, errorRowsCsv, mappingFor, mappingProblem, readCsvTable, withImportMapping,
+  type CsvMapping, type CsvTable, type DecimalSeparator, type MappingField, type RowError,
 } from '../lib/csvMapping';
+import { settingsOf } from '../lib/settings';
 import { CsvImportProvider } from '../lib/sync';
 import type { Account, AccountType } from '../lib/types';
 import type { Ledger } from '../store';
@@ -19,6 +20,8 @@ const ACCOUNT_TYPES: { type: AccountType; label: string }[] = [
   { type: 'investment', label: 'Investment' },
   { type: 'loan', label: 'Loan' },
 ];
+
+const DECIMAL_LABEL: Record<DecimalSeparator, string> = { '.': 'Point: 1,234.56', ',': 'Comma: 1.234,56' };
 
 interface Loaded { name: string; text: string; table: CsvTable }
 interface Summary { file: string; account: string; added: number; duplicates: number; errors: RowError[]; table: CsvTable }
@@ -55,6 +58,9 @@ interface Props {
 /** Drop or pick a CSV, map its columns, choose the account and import through the CSV provider. */
 export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }: Props) {
   const { accounts, importMappings } = ledger.state;
+  // The display currency's usual separator is offered for ambiguous amounts. Account.currency is
+  // not used: CSV accounts default it to USD whatever the user's bank.
+  const { currency } = settingsOf(ledger.state);
   const visible = accounts.filter((a) => !a.hidden);
   const [file, setFile] = useState<Loaded | null>(null);
   const [target, setTarget] = useState<string>(NEW);
@@ -62,6 +68,8 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
   const [newType, setNewType] = useState<AccountType>('checking');
   const [mapping, setMapping] = useState<CsvMapping | null>(null);
   const [fromSaved, setFromSaved] = useState(false);
+  // Whether the decimal separator was chosen during this import, rather than loaded from the saved mapping.
+  const [decimalChosen, setDecimalChosen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [problem, setProblem] = useState('');
   const [importing, setImporting] = useState(false);
@@ -73,6 +81,7 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
     const m = mappingFor(table.headers, saved);
     setMapping(m);
     setFromSaved(m === saved);
+    setDecimalChosen(false);
   }
 
   async function load(f?: File) {
@@ -127,10 +136,20 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
 
   const mappingError = file && mapping ? mappingProblem(mapping, file.table.headers) : undefined;
   const nameError = target === NEW && !newName.trim() ? 'Name the new account.' : undefined;
+  const savedDecimal = !decimalChosen;
   const check = useMemo(
-    () => (file && mapping && !mappingError ? applyMapping(file.table, mapping, 'preview') : null),
-    [file, mapping, mappingError],
+    () => (file && mapping && !mappingError ? applyMapping(file.table, mapping, 'preview', { savedDecimal }) : null),
+    [file, mapping, mappingError, savedDecimal],
   );
+  const detected = useMemo(() => (file && mapping ? detectSeparator(file.table, mapping) : undefined), [file, mapping]);
+  const usual = currencyDecimal(currency);
+  const ambiguous = !!check?.errors.some((e) => e.kind === 'ambiguous');
+  const saved = savedDecimal ? mapping?.decimal : undefined;
+  const conflict = mapping?.decimal && detected && detected !== mapping.decimal ? detected : undefined;
+  const setDecimal = (decimal?: DecimalSeparator) => {
+    setMapping((m) => (m ? { ...m, decimal } : m));
+    setDecimalChosen(true);
+  };
 
   async function runImport() {
     if (!file || !mapping || mappingError || nameError) return;
@@ -139,11 +158,13 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
       : undefined;
     const accountId = newAccount?.id ?? target;
     const accountName = newAccount?.name ?? accounts.find((a) => a.id === target)?.name ?? '';
-    const p = new CsvImportProvider(file.text, { mapping, accountId, newAccount });
+    const p = new CsvImportProvider(file.text, { mapping, accountId, newAccount, savedDecimal });
+    // Remember a separator the rows showed, so a later file whose rows don't show one is offered it.
+    const next = { ...mapping, decimal: mapping.decimal ?? detected };
     setImporting(true);
     onBusy(true);
     try {
-      const r = await ledger.runSync(p, (s) => withImportMapping(s, accountId, mapping));
+      const r = await ledger.runSync(p, (s) => withImportMapping(s, accountId, next));
       setSummary({
         file: file.name, account: accountName, added: r.added, duplicates: r.received - r.added,
         errors: p.errors, table: file.table,
@@ -265,6 +286,31 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
               </select>
             </label>
             {mapping.amount !== undefined ? columnSelect('amount', false) : <>{columnSelect('debit', true)}{columnSelect('credit', true)}</>}
+            <label className="field">
+              <span>Decimal separator</span>
+              <select value={mapping.decimal ?? ''}
+                onChange={(e) => setDecimal((e.target.value || undefined) as DecimalSeparator | undefined)}>
+                <option value="">Detect ({detected ? DECIMAL_LABEL[detected] : 'unclear from the rows'})</option>
+                <option value=".">{DECIMAL_LABEL['.']}</option>
+                <option value=",">{DECIMAL_LABEL[',']}</option>
+              </select>
+            </label>
+            {conflict && (
+              <p className="notice">
+                This file's amounts look like {DECIMAL_LABEL[conflict]}, but {DECIMAL_LABEL[mapping.decimal!]} is selected.{' '}
+                <button className="btn ghost" onClick={() => setDecimal(conflict)}>Use {DECIMAL_LABEL[conflict]}</button>
+              </p>
+            )}
+            {ambiguous && saved && (
+              <button className="btn ghost" onClick={() => setDecimal(saved)}>
+                Use {DECIMAL_LABEL[saved]} (saved for this account) for ambiguous rows
+              </button>
+            )}
+            {ambiguous && usual && usual !== saved && (
+              <button className="btn ghost" onClick={() => setDecimal(usual)}>
+                Use {DECIMAL_LABEL[usual]} (usual for {currency}) for ambiguous rows
+              </button>
+            )}
             {columnSelect('category', true)}
             <label className="check">
               <input type="checkbox" checked={!!mapping.negate}

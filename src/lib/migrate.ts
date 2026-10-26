@@ -39,6 +39,7 @@ function normalizeMapping(v: unknown): CsvMapping | undefined {
   const out: CsvMapping = { date: v.date, description: v.description };
   for (const k of MAPPING_COLUMNS) if (typeof v[k] === 'string') out[k] = v[k];
   if (v.negate === true) out.negate = true;
+  if (v.decimal === '.' || v.decimal === ',') out.decimal = v.decimal;
   return out;
 }
 

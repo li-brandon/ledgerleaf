@@ -101,6 +101,23 @@ describe('migrate', () => {
     expect(migrate(v1, MONTH).importMappings).toBeUndefined();
   });
 
+  it('keeps a CSV mapping\'s decimal separator through a round trip and drops invalid ones', () => {
+    const s = migrate({
+      ...migrate(v1, MONTH),
+      importMappings: {
+        eu: { date: 'Datum', description: 'Text', amount: 'Belopp', decimal: ',' },
+        us: { date: 'Date', description: 'Memo', amount: 'Amount', decimal: '.' },
+        bad: { date: 'Date', description: 'Memo', amount: 'Amount', decimal: ';' },
+      },
+    } as never, MONTH);
+    expect(s.importMappings).toEqual({
+      eu: { date: 'Datum', description: 'Text', amount: 'Belopp', decimal: ',' },
+      us: { date: 'Date', description: 'Memo', amount: 'Amount', decimal: '.' },
+      bad: { date: 'Date', description: 'Memo', amount: 'Amount' },
+    });
+    expect(migrate(JSON.parse(JSON.stringify(s)), MONTH)).toEqual(s);
+  });
+
   it('fills fields missing from stored categories and keeps the exclude flag the user set', () => {
     const base = migrate(v1, MONTH);
     const s = migrate({

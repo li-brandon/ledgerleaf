@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseCsvRows } from '../csv';
 import {
-  applyMapping, detectMapping, errorRowsCsv, mappingFor, mappingProblem, readCsvTable,
+  applyMapping, currencyDecimal, detectMapping, detectSeparator, errorRowsCsv, mappingFor, mappingProblem, readCsvTable,
 } from '../csvMapping';
 import { emptyLedger } from '../migrate';
 import { CsvImportProvider, applySync, fetchSync, type CsvImportOptions } from '../sync';
@@ -130,6 +130,79 @@ describe('applyMapping', () => {
     const ids = () => applyMapping(table, detectMapping(table.headers), 'acct').transactions.map((t) => t.id);
     expect(ids()).toEqual(ids());
     expect(new Set(ids()).size).toBe(11);
+  });
+
+  it('detects a decimal comma from the rows and reads every amount with it', () => {
+    const table = readCsvTable('Date,Description,Amount\n2026-10-01,Hyra,"-1.234"\n2026-10-02,Lön,"25.000,00"\n2026-10-03,Kaffe,"−12,5"');
+    const m = detectMapping(table.headers);
+    expect(detectSeparator(table, m)).toBe(',');
+    expect(applyMapping(table, m, 'acct').transactions.map((t) => t.amount)).toEqual([-1234, 25000, -12.5]);
+  });
+
+  it('turns amounts that are ambiguous without a separator into error rows, until one is chosen', () => {
+    const table = readCsvTable('Date,Description,Amount\n2026-10-01,Rent,"-1,234"\n2026-10-02,Tea,-3');
+    const m = detectMapping(table.headers);
+    expect(detectSeparator(table, m)).toBeUndefined();
+    const { transactions, errors } = applyMapping(table, m, 'acct');
+    expect(transactions.map((t) => t.amount)).toEqual([-3]);
+    expect(errors).toEqual([{
+      row: 2, cells: ['2026-10-01', 'Rent', '-1,234'], reason: 'Ambiguous amount "-1,234": choose the decimal separator', kind: 'ambiguous',
+    }]);
+    expect(applyMapping(table, { ...m, decimal: '.' }, 'acct').transactions.map((t) => t.amount)).toEqual([-1234, -3]);
+    expect(applyMapping(table, { ...m, decimal: ',' }, 'acct').transactions.map((t) => t.amount)).toEqual([-1.23, -3]);
+  });
+
+  it('only lets a saved separator settle ambiguous amounts when the rows show it too', async () => {
+    const mapping = { date: 'Date', description: 'Description', amount: 'Amount', decimal: ',' as const };
+    const csv = 'Date,Description,Amount\n2026-10-01,Pay,"1,234"\n2026-10-02,Rent,"-2,500"\n2026-10-03,Tea,-3';
+    const table = readCsvTable(csv);
+    const saved = applyMapping(table, mapping, 'acct', { savedDecimal: true });
+    expect(saved.transactions.map((t) => t.amount)).toEqual([-3]);
+    expect(saved.errors.map((e) => [e.row, e.kind])).toEqual([[2, 'ambiguous'], [3, 'ambiguous']]);
+    // The provider reads the file exactly as the preview does.
+    const p = new CsvImportProvider(csv, { mapping, accountId: 'acct', savedDecimal: true });
+    expect(await p.fetchTransactions()).toEqual(saved.transactions);
+    expect(p.errors).toEqual(saved.errors);
+
+    // Chosen for this import, the same separator reads them.
+    expect(applyMapping(table, mapping, 'acct').transactions.map((t) => t.amount)).toEqual([1.23, -2.5, -3]);
+    // Rows that show the saved separator back it up; values that read the same either way always import.
+    const shown = readCsvTable(`${csv}\n2026-10-04,Cake,"12,50"`);
+    expect(applyMapping(shown, mapping, 'acct', { savedDecimal: true }).transactions.map((t) => t.amount)).toEqual([1.23, -2.5, -3, 12.5]);
+    // Rows that show the other separator do not.
+    const other = readCsvTable(`${csv}\n2026-10-04,Cake,"1,234.50"`);
+    expect(applyMapping(other, mapping, 'acct', { savedDecimal: true }).errors.map((e) => e.kind ?? e.reason))
+      .toEqual(['ambiguous', 'ambiguous', 'Unreadable amount "1,234.50"']);
+  });
+
+  it('lets an explicit separator win over the one the rows show', () => {
+    const table = readCsvTable('Date,Description,Amount\n2026-10-01,Tea,"12,50"\n2026-10-02,Cake,"1,234"');
+    expect(applyMapping(table, detectMapping(table.headers), 'acct').transactions.map((t) => t.amount)).toEqual([12.5, 1.23]);
+    const { transactions, errors } = applyMapping(table, { ...detectMapping(table.headers), decimal: '.' }, 'acct');
+    expect(transactions.map((t) => t.amount)).toEqual([1234]);
+    expect(errors.map((e) => e.reason)).toEqual(['Unreadable amount "12,50"']);
+  });
+
+  it('detects across debit and credit columns and rounds their difference to cents', () => {
+    const table = readCsvTable('Date,Payee,Debit,Credit\n2026-10-01,Shop,"0,1","0,3"\n2026-10-02,Pay,,"1.500"\n2026-10-03,Fee,"0,125",');
+    const { transactions } = applyMapping(table, detectMapping(table.headers), 'acct');
+    expect(transactions.map((t) => t.amount)).toEqual([0.2, 1500, -0.13]);
+  });
+
+  it('keeps ambiguous amounts as error rows whatever the display currency', async () => {
+    const mapping = { date: 'Date', description: 'Description', amount: 'Amount' };
+    for (const currency of ['USD', 'EUR']) {
+      // Held in a variable, as an older caller would pass it: the currency must not settle the separator.
+      const options = { mapping, accountId: 'acct', currency };
+      for (const csv of ['Date,Description,Amount\n2026-10-01,Rent,"-1,500"', 'Date,Description,Amount\n2026-10-01,Rent,-1.234']) {
+        const p = new CsvImportProvider(csv, options);
+        expect(await p.fetchTransactions()).toEqual([]);
+        expect(p.errors.map((e) => e.reason)).toEqual([expect.stringMatching(/^Ambiguous amount .*: choose the decimal separator$/)]);
+      }
+    }
+    expect(currencyDecimal('USD')).toBe('.');
+    expect(currencyDecimal('EUR')).toBe(',');
+    expect(currencyDecimal('CHF')).toBeUndefined();
   });
 
   it('refuses a mapping that does not fit the file', () => {

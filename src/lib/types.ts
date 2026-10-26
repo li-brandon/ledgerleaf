@@ -129,7 +129,14 @@ export interface CsvMapping {
   category?: string;
   /** The file shows spending as positive (common on card statements): flip every sign. */
   negate?: boolean;
+  /**
+   * Decimal separator of the amounts; the other one separates thousands ("1,234.56" or
+   * "1.234,56"). When unset it is detected from the file's amounts.
+   */
+  decimal?: DecimalSeparator;
 }
+
+export type DecimalSeparator = '.' | ',';
 
 /** How often a recurring charge repeats. */
 export type Cadence = 'weekly' | 'monthly' | 'yearly';
