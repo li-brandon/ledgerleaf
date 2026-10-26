@@ -17,13 +17,14 @@ npm install        # install dependencies
 npm run dev        # start the Vite dev server (http://localhost:5173 by default)
 npm run plaid-server  # optional: local Plaid sandbox bridge (see "Connect a bank" below)
 npm test           # run the Vitest suite once
+npm run lint       # ESLint (--max-warnings=0)
 npm run build      # type-check (tsc --noEmit) and build to dist/
 npm run preview    # serve the built dist/ locally (http://localhost:4173 by default)
 ```
 
-`npm run test:coverage` runs the tests with V8 coverage for `src/lib` (80% line threshold, set in `vite.config.ts`).
+`npm run test:coverage` runs the tests with V8 coverage for `src/**` (excluding tests, test helpers, type-only files and `src/main.tsx`) and fails below the thresholds set in `vite.config.ts`: statements 89%, branches 84%, functions 85%, lines 90.9%, plus 80% lines for `src/lib/**`.
 
-CI (`.github/workflows/ci.yml`) runs `npm ci`, the tests, `tsc --noEmit`, the build and `npm audit --audit-level=high` on every pull request and on pushes to `main`.
+CI (`.github/workflows/ci.yml`) runs `npm ci`, `npm run lint`, `npm run test:coverage`, `npm run build` (which type-checks with `tsc --noEmit`) and `npm audit --audit-level=high` on every pull request and on pushes to `main`.
 
 ## Trying it out
 
@@ -166,3 +167,7 @@ src/
   test/                      shared test helpers
   **/__tests__/              Vitest tests next to the code they cover
 ```
+
+## Contributing
+
+Changes land on `main` only through pull requests: one branch per Linear issue, a PR using the template, and a squash-merge once Argus has reviewed it, every comment is addressed and CI is green. No direct pushes to `main`. See [CONTRIBUTING.md](CONTRIBUTING.md) for branch and title conventions and the checks to run locally; agents should also read [AGENTS.md](AGENTS.md).
