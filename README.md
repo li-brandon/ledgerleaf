@@ -6,7 +6,7 @@ A personal finance app (accounts, transactions, budgets, recurring charges, insi
 
 ## Prerequisites
 
-- Node.js 20 or newer (`"engines": { "node": ">=20" }` in `package.json`). `.nvmrc` pins Node 24, so with nvm you can run `nvm use`.
+- Node.js 22.22.2 or newer on 22, 24.15.0 or newer on 24, or 26 and up (`"engines": { "node": "^22.22.2 || ^24.15.0 || >=26.0.0" }` in `package.json`, matching what jsdom and vitest support). `.nvmrc` pins Node 24, so with nvm you can run `nvm use`.
 - npm, which comes with Node.
 - A modern browser with IndexedDB.
 
@@ -22,6 +22,8 @@ npm run preview    # serve the built dist/ locally (http://localhost:4173 by def
 ```
 
 `npm run test:coverage` runs the tests with V8 coverage for `src/lib` (80% line threshold, set in `vite.config.ts`).
+
+CI (`.github/workflows/ci.yml`) runs `npm ci`, the tests, `tsc --noEmit`, the build and `npm audit --audit-level=high` on every pull request and on pushes to `main`.
 
 ## Trying it out
 
