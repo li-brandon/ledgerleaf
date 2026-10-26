@@ -77,6 +77,35 @@ describe('CSV import flow', () => {
     expect((await stored()).transactions).toHaveLength(4);
   });
 
+  it('warns about and skips rows that match existing transactions except for sign', async () => {
+    const user = userEvent.setup();
+    await renderApp(undefined, '#/connections');
+    await user.upload(fileInput(), csvFile(BANK_CSV));
+    await user.click(await within(card()).findByRole('button', { name: 'Import 3 rows' }));
+    await within(card()).findByRole('status');
+    const before = (await stored()).transactions.map((t) => [t.description, t.amount]);
+
+    await user.upload(fileInput(), csvFile(`${BANK_CSV}\n10/04/2026,Bakery,-6.50,Dining`, 'october.csv'));
+    const ui = within(card());
+    await ui.findByText('october.csv');
+    expect(ui.queryByText(/opposite-sign duplicates/)).toBeNull();
+    await user.click(ui.getByLabelText(/flip signs/));
+
+    expect(ui.getByText(/^3 opposite-sign duplicates of existing transactions will be skipped/)).toBeInTheDocument();
+    const table = within(card().querySelector<HTMLTableElement>('table.preview')!);
+    const status = (description: string) => within(table.getByText(description).closest('tr')!).getAllByRole('cell').at(-1);
+    for (const d of ['Corner Grocer', 'Paycheck', 'Bus pass']) expect(status(d)).toHaveTextContent('Opposite-sign duplicate');
+    expect(status('Bakery')).toHaveTextContent('Ready');
+    expect(ui.getByText('1 rows ready to import.')).toBeInTheDocument();
+    await user.click(ui.getByRole('button', { name: 'Import 1 rows' }));
+
+    const summary = await ui.findByRole('status');
+    expect(within(summary).getByText('Added').nextSibling).toHaveTextContent('1');
+    expect(within(summary).getByText('Opposite-sign duplicates skipped').nextSibling).toHaveTextContent('3');
+    expect((await stored()).transactions.map((t) => [t.description, t.amount]).sort())
+      .toEqual([...before, ['Bakery', 6.5]].sort());
+  });
+
   it('handles split debit/credit columns, flipped signs and rows with errors', async () => {
     const user = userEvent.setup();
     await renderApp(undefined, '#/connections');

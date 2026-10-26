@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { detectDateOrder, detectDecimal, detectDelimiter, normalizeDate, parseAmount, parseCsvRows, parseTransactionsCsv, readAmount, readDate } from '../csv';
+import { hashId } from '../sync/hash';
 
 describe('parseCsvRows', () => {
   it('handles quotes, escaped quotes, CRLF and blank lines', () => {
@@ -312,6 +313,11 @@ describe('parseTransactionsCsv', () => {
     const b = parseTransactionsCsv(csv).transactions.map((t) => t.id);
     expect(a).toEqual(b);
     expect(new Set(a).size).toBe(3);
+  });
+
+  it('keeps the signed-amount ids it has always given, so files imported before still dedupe', () => {
+    const [tx] = parseTransactionsCsv('date,description,amount,account\n2026-01-02,Tea,-3,Card').transactions;
+    expect(tx).toMatchObject({ id: `csv-${hashId('2026-01-02|tea|-3.00|csv-card#0')}`, externalId: hashId('2026-01-02|tea|-3.00|csv-card#0') });
   });
 
   it('respects header column order and works without a header', () => {

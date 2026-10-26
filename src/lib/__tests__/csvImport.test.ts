@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { parseCsvRows } from '../csv';
 import {
-  applyMapping, currencyDecimal, detectMapping, detectOrder, detectSeparator, errorRowsCsv, mappingFor, mappingProblem, readCsvTable,
+  applyMapping, currencyDecimal, detectMapping, detectOrder, detectSeparator, errorRowsCsv, mappingFor, mappingProblem, matchExisting,
+  readCsvTable, type CsvMapping,
 } from '../csvMapping';
 import { emptyLedger } from '../migrate';
-import { CsvImportProvider, applySync, fetchSync, type CsvImportOptions } from '../sync';
-import type { Account, DateOrder, LedgerState } from '../types';
+import { CsvImportProvider, applySync, fetchSync, hashId, type CsvImportOptions } from '../sync';
+import type { Account, DateOrder, LedgerState, Transaction } from '../types';
 import amex from './fixtures/amex.csv?raw';
 import chase from './fixtures/chase.csv?raw';
 import generic from './fixtures/generic.csv?raw';
@@ -18,7 +19,7 @@ async function importCsv(state: LedgerState, text: string, options: Partial<CsvI
   const mapping = options.mapping ?? detectMapping(readCsvTable(text).headers);
   const accountId = options.accountId ?? card.id;
   const newAccount = 'newAccount' in options ? options.newAccount : state.accounts.some((a) => a.id === accountId) ? undefined : card;
-  const p = new CsvImportProvider(text, { mapping, accountId, newAccount });
+  const p = new CsvImportProvider(text, { mapping, accountId, newAccount, existing: state.transactions });
   const outcome = applySync(state, p.id, await fetchSync(p, state), now);
   return { ...outcome, provider: p, duplicates: outcome.received - outcome.added };
 }
@@ -164,6 +165,16 @@ describe('applyMapping', () => {
     const ids = () => applyMapping(table, detectMapping(table.headers), 'acct').transactions.map((t) => t.id);
     expect(ids()).toEqual(ids());
     expect(new Set(ids()).size).toBe(11);
+  });
+
+  it('gives the same ids with and without flipped signs, keeping rows that differ only in sign apart', () => {
+    const table = readCsvTable('Date,Description,Amount\n2026-10-01,Swap,5\n2026-10-01,Swap,-5\n2026-10-02,Tea,-3');
+    const mapping = detectMapping(table.headers);
+    const plain = applyMapping(table, mapping, 'acct').transactions;
+    const flipped = applyMapping(table, { ...mapping, negate: true }, 'acct').transactions;
+    expect(flipped.map((t) => t.amount)).toEqual([-5, 5, 3]);
+    expect(flipped.map((t) => [t.id, t.externalId])).toEqual(plain.map((t) => [t.id, t.externalId]));
+    expect(new Set(plain.map((t) => t.id)).size).toBe(3);
   });
 
   it('detects a decimal comma from the rows and reads every amount with it', () => {
@@ -417,5 +428,133 @@ describe('importing through the sync pipeline', () => {
 
   it('rejects the import when the target account does not exist', async () => {
     await expect(importCsv(emptyLedger('2026-10'), chase, { accountId: 'ghost', newAccount: undefined })).rejects.toThrow(/unknown account/);
+  });
+});
+
+describe('opposite-sign duplicates', () => {
+  // The zero row reads the same either way, so it is never an opposite-sign duplicate.
+  const text = 'Date,Description,Amount\n2026-10-01,Tea,-3\n2026-10-02,Pay,100\n2026-10-03,Fee waived,0';
+  const mapping: CsvMapping = detectMapping(readCsvTable(text).headers);
+  const flip = { ...mapping, negate: true };
+  const amounts = (state: LedgerState) => Object.fromEntries(state.transactions.map((t) => [t.description, t.amount]));
+
+  it.each([['without then with', mapping, flip], ['with then without', flip, mapping]])(
+    'skips every non-zero row when a file is imported %s flipped signs, leaving stored amounts alone',
+    async (_, first, second) => {
+      const a = await importCsv(emptyLedger('2026-10'), text, { mapping: first });
+      expect(a.added).toBe(3);
+      const b = await importCsv(a.state, text, { mapping: second });
+      expect(b).toMatchObject({ added: 0, updated: 0, received: 1 });
+      expect(b.provider.oppositeSign).toBe(2);
+      expect(amounts(b.state)).toEqual(amounts(a.state));
+      expect(b.state.transactions).toHaveLength(3);
+    },
+  );
+
+  it('counts only the rows that match an existing transaction except for sign', async () => {
+    const a = await importCsv(emptyLedger('2026-10'), text, { mapping });
+    const b = await importCsv(a.state, 'Date,Description,Amount\n2026-10-01,Tea,-3\n2026-10-02,Pay,100\n2026-10-04,Cake,-5', { mapping: flip });
+    expect(b.provider.oppositeSign).toBe(2);
+    expect(b).toMatchObject({ added: 1, updated: 0 });
+    expect(amounts(b.state)).toEqual({ ...amounts(a.state), Cake: 5 });
+  });
+
+  it('flags rows in matchExisting, only against CSV transactions in the same account', () => {
+    const table = readCsvTable(text);
+    const stored = applyMapping(table, mapping, 'acct').transactions.map((t) => ({ ...t, source: 'csv' }));
+    const rows = applyMapping(table, flip, 'acct').transactions;
+    const r = matchExisting(rows, stored);
+    expect([...r.oppositeSign]).toEqual([rows[0], rows[1]]);
+    expect(r.transactions).toEqual([rows[2]]);
+    expect(matchExisting(rows, stored.map((t) => ({ ...t, accountId: 'other' }))).oppositeSign.size).toBe(0);
+    expect(matchExisting(rows, stored.map((t) => ({ ...t, source: 'plaid' }))).oppositeSign.size).toBe(0);
+  });
+
+  const teaAmounts = (state: LedgerState) => state.transactions.filter((t) => t.description === 'Tea').map((t) => t.amount).sort((x, y) => x - y);
+  const charge = 'Date,Description,Amount\n2026-10-01,Tea,-5';
+  const chargeThenRefund = 'Date,Description,Amount\n2026-10-01,Tea,-5\n2026-10-01,Tea,5';
+  const refundThenCharge = 'Date,Description,Amount\n2026-10-01,Tea,5\n2026-10-01,Tea,-5';
+
+  it('imports a refund listed before the charge it shares a day with, under an id of its own', async () => {
+    const a = await importCsv(emptyLedger('2026-10'), charge, { mapping });
+    const b = await importCsv(a.state, refundThenCharge, { mapping });
+    expect(b).toMatchObject({ added: 1, updated: 0 });
+    expect(b.provider.oppositeSign).toBe(0);
+    expect(teaAmounts(b.state)).toEqual([-5, 5]);
+    // The refund's id in the file is the first Tea id, which the stored charge already has.
+    const ids = b.state.transactions.map((t) => t.externalId);
+    expect(new Set(ids).size).toBe(2);
+    expect(b.state.transactions.find((t) => t.amount === -5)!.externalId).toBe(a.state.transactions[0].externalId);
+  });
+
+  it('adds nothing when a charge and its refund come back in the other order', async () => {
+    const a = await importCsv(emptyLedger('2026-10'), chargeThenRefund, { mapping });
+    const b = await importCsv(a.state, refundThenCharge, { mapping });
+    expect(b).toMatchObject({ added: 0, updated: 0, received: 2 });
+    expect(b.provider.oppositeSign).toBe(0);
+    expect(teaAmounts(b.state)).toEqual([-5, 5]);
+  });
+
+  describe('transactions stored under the signed ids imports made before', () => {
+    /** The ids imports used to give: a hash of the signed amount, for rows that occur once. */
+    const signedId = (t: Transaction) => hashId(`${[t.date, t.description.toLowerCase(), t.amount.toFixed(2), t.accountId].join('|')}#0`);
+    async function legacyState(m: CsvMapping, file = text) {
+      const { state } = await importCsv(emptyLedger('2026-10'), file, { mapping: m });
+      const transactions = state.transactions.map((t) => ({ ...t, id: `csv-${signedId(t)}`, externalId: signedId(t) }));
+      return { ...state, transactions };
+    }
+
+    it('imports a refund listed before the charge it shares a day with', async () => {
+      const state = await legacyState(mapping, charge);
+      const again = await importCsv(state, refundThenCharge, { mapping });
+      expect(again).toMatchObject({ added: 1, updated: 0 });
+      expect(again.provider.oppositeSign).toBe(0);
+      expect(teaAmounts(again.state)).toEqual([-5, 5]);
+      expect(new Set(again.state.transactions.map((t) => t.externalId)).size).toBe(2);
+    });
+
+    it('adds nothing when a charge and its refund come back in the other order', async () => {
+      const state = await legacyState(mapping, chargeThenRefund);
+      const again = await importCsv(state, refundThenCharge, { mapping });
+      expect(again).toMatchObject({ added: 0, updated: 0, received: 2 });
+      expect(again.provider.oppositeSign).toBe(0);
+      expect(teaAmounts(again.state)).toEqual([-5, 5]);
+    });
+
+    it.each([['without', mapping], ['with', flip]])('adds nothing when the file is imported again %s flipped signs', async (_, m) => {
+      const state = await legacyState(m);
+      const again = await importCsv(state, text, { mapping: m });
+      expect(again).toMatchObject({ added: 0, updated: 0, received: 3 });
+      expect(again.provider.oppositeSign).toBe(0);
+      expect(again.state.transactions.map((t) => t.id).sort()).toEqual(state.transactions.map((t) => t.id).sort());
+    });
+
+    it('does not take a stored row for the opposite-sign one that hashes like it', async () => {
+      // Under the old scheme the 5 row's id hashed the same text as the new id of the -5 row.
+      const pair = 'Date,Description,Amount\n2026-10-01,Swap,-5\n2026-10-01,Swap,5';
+      const state = await legacyState(mapping, pair);
+      const again = await importCsv(state, pair, { mapping });
+      expect(again).toMatchObject({ added: 0, updated: 0, received: 2 });
+      expect(again.provider.oppositeSign).toBe(0);
+    });
+
+    it('matches each stored transaction to one row, so a new refund of it is still imported', async () => {
+      const state = await legacyState(mapping, 'Date,Description,Amount\n2026-10-01,Tea,-5');
+      const again = await importCsv(state, 'Date,Description,Amount\n2026-10-01,Tea,-5\n2026-10-01,Tea,5', { mapping });
+      expect(again).toMatchObject({ added: 1, updated: 0 });
+      expect(again.provider.oppositeSign).toBe(0);
+      expect(again.state.transactions.map((t) => t.amount).sort((x, y) => x - y)).toEqual([-5, 5]);
+    });
+
+    it.each([['without', mapping, flip], ['with', flip, mapping]])(
+      'skips opposite-sign duplicates when a file imported %s flipped signs comes back the other way',
+      async (_, first, second) => {
+        const state = await legacyState(first);
+        const again = await importCsv(state, text, { mapping: second });
+        expect(again).toMatchObject({ added: 0, updated: 0, received: 1 });
+        expect(again.provider.oppositeSign).toBe(2);
+        expect(amounts(again.state)).toEqual(amounts(state));
+      },
+    );
   });
 });
