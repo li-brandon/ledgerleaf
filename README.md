@@ -6,7 +6,7 @@ A personal finance app (accounts, transactions, budgets, recurring charges, insi
 
 ## Prerequisites
 
-- Node.js 20 or newer (`"engines": { "node": ">=20" }` in `package.json`). `.nvmrc` pins Node 24, so with nvm you can run `nvm use`.
+- Node.js 22.22.2 or newer on 22, 24.15.0 or newer on 24, or 26 and up (`"engines": { "node": "^22.22.2 || ^24.15.0 || >=26.0.0" }` in `package.json`, matching what jsdom and vitest support). `.nvmrc` pins Node 24, so with nvm you can run `nvm use`.
 - npm, which comes with Node.
 - A modern browser with IndexedDB.
 
