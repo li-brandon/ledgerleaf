@@ -4,8 +4,8 @@ import { normalizeRecurring } from './recurring';
 import { normalizeRule } from './rules';
 import { normalizeSettings } from './settings';
 import {
-  NON_SPEND, SCHEMA_VERSION, type Account, type Budget, type Budgets, type Category, type CsvMapping, type ImportBatch,
-  type LedgerState, type Transaction,
+  NON_SPEND, SCHEMA_VERSION, type Account, type Budget, type Budgets, type Category, type CsvMapping, type DeletedTransaction,
+  type ImportBatch, type LedgerState, type Transaction,
 } from './types';
 
 export const V1_KEY = 'ledgerleaf:v1';
@@ -50,6 +50,20 @@ function normalizeBatches(v: unknown): ImportBatch[] {
   return list<unknown>(v).filter((b): b is ImportBatch =>
     isObject(b) && typeof b.id === 'string' && !!b.id && typeof b.accountId === 'string'
     && typeof b.file === 'string' && typeof b.at === 'string');
+}
+
+/** Stored tombstones of deleted transactions that can still be recognised, with unknown keys dropped. */
+function normalizeDeleted(v: unknown): DeletedTransaction[] {
+  return list<unknown>(v).flatMap((d) => {
+    if (
+      !isObject(d) || typeof d.id !== 'string' || !d.id || typeof d.accountId !== 'string' || typeof d.date !== 'string'
+      || typeof d.description !== 'string' || typeof d.amount !== 'number' || !Number.isFinite(d.amount)
+    ) return [];
+    const out: DeletedTransaction = { id: d.id, accountId: d.accountId, date: d.date, description: d.description, amount: d.amount };
+    if (typeof d.source === 'string') out.source = d.source;
+    if (typeof d.externalId === 'string') out.externalId = d.externalId;
+    return [out];
+  });
 }
 
 /**
@@ -141,6 +155,8 @@ export function normalizeLedger(s: Partial<LedgerState>): LedgerState {
   if (isObject(s.settings)) out.settings = normalizeSettings(s.settings);
   const batches = normalizeBatches(s.importBatches);
   if (batches.length) out.importBatches = batches;
+  const deleted = normalizeDeleted(s.deletedTransactions);
+  if (deleted.length) out.deletedTransactions = deleted;
   return out;
 }
 

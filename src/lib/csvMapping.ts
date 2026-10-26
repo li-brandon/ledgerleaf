@@ -1,7 +1,9 @@
 import {
   ambiguousDate, contentId, contentIds, detectDateOrder, detectDecimal, detectDelimiter, parseCsvRows, readAmount, readDate, toCsv,
 } from './csv';
-import type { CsvDelimiter, CsvMapping, DateOrder, DecimalSeparator, LedgerState, Transaction } from './types';
+import type {
+  CsvDelimiter, CsvMapping, DateOrder, DecimalSeparator, DeletedTransaction, LedgerState, Transaction,
+} from './types';
 
 export type { CsvDelimiter, CsvMapping, DateOrder, DecimalSeparator };
 
@@ -284,6 +286,8 @@ export interface ExistingMatch {
   transactions: Transaction[];
   /** Rows that match an existing transaction except for sign; they are left out of `transactions`. */
   oppositeSign: Set<Transaction>;
+  /** Rows that match a transaction the user deleted; they are left out of `transactions`. */
+  deleted: Set<Transaction>;
 }
 
 /**
@@ -293,22 +297,27 @@ export interface ExistingMatch {
  * Within each group of equal content, rows first pair one-to-one in file order with stored
  * transactions of the same sign, then the remaining rows with the remaining ones of the opposite
  * sign: those are opposite-sign duplicates (importing one would overwrite the stored amount's
- * sign), so they are left out. Zero amounts only pair with zero.
+ * sign), so they are left out. Zero amounts only pair with zero. Transactions the user deleted
+ * (`deleted`) pair like stored ones, after them; rows paired with one are left out, and new rows
+ * never take a deleted one's id.
  */
-export function matchExisting(rows: readonly Transaction[], existing: readonly Transaction[]): ExistingMatch {
-  const group = (t: Transaction) => JSON.stringify([t.accountId, t.date, t.description.toLowerCase(), Math.abs(t.amount).toFixed(2)]);
+export function matchExisting(
+  rows: readonly Transaction[], existing: readonly Transaction[], deleted: readonly DeletedTransaction[] = [],
+): ExistingMatch {
+  const group = (t: DeletedTransaction) => JSON.stringify([t.accountId, t.date, t.description.toLowerCase(), Math.abs(t.amount).toFixed(2)]);
   const idKey = (accountId: string, externalId: string) => JSON.stringify([accountId, externalId]);
   const accounts = new Set(rows.map((t) => t.accountId));
-  const stored = new Map<string, Transaction[]>();
+  const stored = new Map<string, DeletedTransaction[]>();
   const taken = new Set<string>();
-  for (const t of existing) {
+  const gone = new Set(deleted);
+  for (const t of [...existing, ...deleted]) {
     if (t.source !== CSV_SOURCE || !accounts.has(t.accountId)) continue;
     stored.set(group(t), [...(stored.get(group(t)) ?? []), t]);
     if (t.externalId) taken.add(idKey(t.accountId, t.externalId));
   }
-  const sameSign = (a: Transaction, b: Transaction) => Math.sign(a.amount) === Math.sign(b.amount);
-  const match = new Map<Transaction, Transaction>();
-  const claimed = new Set<Transaction>();
+  const sameSign = (a: DeletedTransaction, b: DeletedTransaction) => Math.sign(a.amount) === Math.sign(b.amount);
+  const match = new Map<Transaction, DeletedTransaction>();
+  const claimed = new Set<DeletedTransaction>();
   for (const same of [true, false]) {
     for (const t of rows) {
       if (match.has(t)) continue;
@@ -321,9 +330,11 @@ export function matchExisting(rows: readonly Transaction[], existing: readonly T
   }
   const transactions: Transaction[] = [];
   const oppositeSign = new Set<Transaction>();
+  const dropped = new Set<Transaction>();
   for (const t of rows) {
     const m = match.get(t);
-    if (m && !sameSign(m, t)) oppositeSign.add(t);
+    if (m && gone.has(m)) dropped.add(t);
+    else if (m && !sameSign(m, t)) oppositeSign.add(t);
     else if (m) transactions.push(m.id === t.id && m.externalId === t.externalId ? t : { ...t, id: m.id, externalId: m.externalId });
     else {
       let id = t.externalId;
@@ -332,7 +343,7 @@ export function matchExisting(rows: readonly Transaction[], existing: readonly T
       transactions.push(id === t.externalId ? t : { ...t, id: `csv-${id}`, externalId: id });
     }
   }
-  return { transactions, oppositeSign };
+  return { transactions, oppositeSign, deleted: dropped };
 }
 
 /** The rows that failed, as CSV in the original columns plus a trailing "Error" column. */

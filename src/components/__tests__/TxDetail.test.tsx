@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { csvLedger, renderApp, stored } from '../../test/app';
 
 const CSV = [
@@ -116,5 +116,81 @@ describe('transaction detail editing', () => {
       const cats = (await stored()).transactions.map((t) => [t.date, t.category]).sort();
       expect(cats).toEqual([['2026-10-01', 'Shopping'], ['2026-10-02', 'Transfer'], ['2026-10-05', 'Transfer']]);
     });
+  });
+});
+
+describe('deleting a transaction', () => {
+  afterEach(() => vi.useRealTimers());
+
+  const toast = () => screen.getByText(/^Deleted /).closest<HTMLElement>('[role=status]')!;
+
+  it('asks first; cancelling keeps it', async () => {
+    const user = await open();
+    const before = await stored();
+    await user.click(row('PAYROLL ACME'));
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await user.click(detail().getByRole('button', { name: 'Delete transaction' }));
+    expect(confirm).toHaveBeenCalledWith("Delete PAYROLL ACME ($2,500.00 on Fri, Oct 2, 2026)? Re-importing or syncing won't add it back.");
+    expect(row('PAYROLL ACME')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 2, name: 'PAYROLL ACME' })).toBeInTheDocument();
+    expect(screen.queryByText(/^Deleted /)).toBeNull();
+    expect(await stored()).toEqual(before);
+  });
+
+  it('deletes it once confirmed, closes the detail and offers to undo, which restores it', async () => {
+    const user = await open();
+    const payroll = await txBy('2026-10-02');
+    await user.click(row('PAYROLL ACME'));
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await user.click(detail().getByRole('button', { name: 'Delete transaction' }));
+
+    expect(await screen.findByText('Deleted PAYROLL ACME.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /PAYROLL ACME/ })).toBeNull();
+    expect(screen.queryByRole('heading', { level: 2 })).toBeNull();
+    const deleted = await stored();
+    expect(deleted.transactions.map((t) => t.description)).not.toContain('PAYROLL ACME');
+    expect(deleted.deletedTransactions).toEqual([expect.objectContaining({ id: payroll.id })]);
+
+    await user.click(within(toast()).getByRole('button', { name: 'Undo' }));
+    expect(await screen.findByText(/PAYROLL ACME/, { selector: '.tx-desc' })).toBeInTheDocument();
+    expect(screen.queryByText(/^Deleted /)).toBeNull();
+    expect(screen.queryByRole('heading', { level: 2 })).toBeNull();
+    await waitFor(async () => {
+      const after = await stored();
+      expect(after.transactions.find((t) => t.id === payroll.id)).toEqual(payroll);
+      expect(after.deletedTransactions).toBeUndefined();
+    });
+  });
+
+  it('the undo toast goes away by itself after a few seconds, and the delete stays', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    const user = await open();
+    await user.click(row('PAYROLL ACME'));
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await user.click(detail().getByRole('button', { name: 'Delete transaction' }));
+    expect(await screen.findByText('Deleted PAYROLL ACME.')).toBeInTheDocument();
+
+    act(() => vi.advanceTimersByTime(5000));
+    expect(screen.getByText('Deleted PAYROLL ACME.')).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1000));
+    expect(screen.queryByText('Deleted PAYROLL ACME.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull();
+    expect((await stored()).transactions.map((t) => t.description)).not.toContain('PAYROLL ACME');
+  });
+
+  it('keeps it and says so when the delete cannot be saved', async () => {
+    const user = await open();
+    const before = await stored();
+    await user.click(row('PAYROLL ACME'));
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(IDBObjectStore.prototype, 'delete').mockImplementationOnce(() => {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+    });
+    await user.click(detail().getByRole('button', { name: 'Delete transaction' }));
+    expect(await detail().findByRole('alert')).toHaveTextContent('The transaction could not be deleted; nothing was changed.');
+    expect(detail().getByRole('button', { name: 'Delete transaction' })).toBeEnabled();
+    expect(row('PAYROLL ACME')).toBeInTheDocument();
+    expect(screen.queryByText(/^Deleted /)).toBeNull();
+    expect(await stored()).toEqual(before);
   });
 });

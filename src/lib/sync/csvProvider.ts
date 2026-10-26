@@ -1,6 +1,6 @@
 import { parseTransactionsCsv } from '../csv';
 import { CSV_SOURCE, applyMapping, matchExisting, readCsvTable, type CsvTable, type RowError } from '../csvMapping';
-import type { Account, CsvMapping, Transaction } from '../types';
+import type { Account, CsvMapping, DeletedTransaction, Transaction } from '../types';
 import type { ProviderMeta, SyncProvider } from './types';
 
 export const CSV_PROVIDER: ProviderMeta = {
@@ -29,6 +29,8 @@ export interface CsvImportOptions {
    * row is imported as mapped.
    */
   existing?: readonly Transaction[];
+  /** Transactions the user deleted: rows matching one by content are left out (see {@link matchExisting}). */
+  deleted?: readonly DeletedTransaction[];
 }
 
 interface Parsed {
@@ -39,6 +41,8 @@ interface Parsed {
   errors: RowError[];
   /** Rows left out as opposite-sign duplicates of existing transactions. */
   oppositeSign: number;
+  /** Rows left out as matching transactions the user deleted. */
+  deleted: number;
   table?: CsvTable;
 }
 
@@ -61,15 +65,16 @@ export class CsvImportProvider implements SyncProvider {
     if (this.parsed) return this.parsed;
     const o = this.options;
     if (!o) {
-      return (this.parsed = { ...parseTransactionsCsv(this.text), errors: [], oppositeSign: 0 });
+      return (this.parsed = { ...parseTransactionsCsv(this.text), errors: [], oppositeSign: 0, deleted: 0 });
     }
     // Read with the mapping's delimiter, else the detected one, as the import screen's preview is.
     const table = readCsvTable(this.text, o.mapping.delimiter);
     const mapped = applyMapping(table, o.mapping, o.accountId, { savedDecimal: o.savedDecimal, savedDateOrder: o.savedDateOrder });
-    const { transactions, oppositeSign } = matchExisting(mapped.transactions, o.existing ?? []);
+    const { transactions, oppositeSign, deleted } = matchExisting(mapped.transactions, o.existing ?? [], o.deleted);
     const { errors } = mapped;
     return (this.parsed = {
-      accounts: o.newAccount ? [o.newAccount] : [], transactions, skipped: errors.length, errors, oppositeSign: oppositeSign.size, table,
+      accounts: o.newAccount ? [o.newAccount] : [], transactions, skipped: errors.length, errors, oppositeSign: oppositeSign.size,
+      deleted: deleted.size, table,
     });
   }
 
@@ -86,6 +91,11 @@ export class CsvImportProvider implements SyncProvider {
   /** Rows left out because they match an existing transaction except for sign (mapped imports with `existing`). */
   get oppositeSign(): number {
     return this.parse().oppositeSign;
+  }
+
+  /** Rows left out because they match a transaction the user deleted (mapped imports with `deleted`). */
+  get deleted(): number {
+    return this.parse().deleted;
   }
 
   /** The parsed file, for mapped imports. */

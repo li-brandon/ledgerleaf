@@ -214,6 +214,13 @@ export interface ImportBatch {
   snapshots?: ImportSnapshot[];
 }
 
+/**
+ * A transaction the user deleted: enough of it to recognise the row when a re-sync (by
+ * `source` and `externalId`, see `dedupeKey`) or a re-import of the same CSV file (by content)
+ * offers it again, so it is not added back.
+ */
+export type DeletedTransaction = Pick<Transaction, 'id' | 'accountId' | 'date' | 'description' | 'amount' | 'source' | 'externalId'>;
+
 export const SCHEMA_VERSION = 2;
 
 export interface LedgerState {
@@ -236,6 +243,8 @@ export interface LedgerState {
   settings?: Settings;
   /** CSV imports that can be undone, newest first. Absent until the first one. */
   importBatches?: ImportBatch[];
+  /** Transactions the user deleted, so syncs and imports leave them out. Absent until the first one. */
+  deletedTransactions?: DeletedTransaction[];
 }
 
 export const CATEGORIES = [

@@ -18,10 +18,10 @@ import { applyRulesToLedger, moveRule as moveRuleIn, removeRule, upsertRule, typ
 import { settingsOf, updateSettings, type Settings } from './lib/settings';
 import { SyncError, applySync, fetchSync, type SyncProvider } from './lib/sync';
 import {
-  addMerchantRule, editTransaction, removeMerchantRule, setCategory as setTxCategory, setReviewed as setTxReviewed,
-  type TxEdit,
+  addMerchantRule, deleteTransaction as deleteTx, editTransaction, removeMerchantRule, restoreTransaction as restoreTx,
+  setCategory as setTxCategory, setReviewed as setTxReviewed, type TxEdit,
 } from './lib/txEdits';
-import type { LedgerState, RecurringDecision, Rule } from './lib/types';
+import type { LedgerState, RecurringDecision, Rule, Transaction } from './lib/types';
 
 export type { LedgerState };
 
@@ -218,6 +218,41 @@ export function useLedger(open: (options: OpenOptions) => Promise<Repository> = 
     return removed;
   }, []);
 
+  /**
+   * Write `change` of the latest ledger to storage, then show it; edits made meanwhile get
+   * `change` applied on top. Throws `failure` and changes nothing if the write fails.
+   */
+  const commitChange = useCallback(async (change: (s: LedgerState) => LedgerState, failure: string) => {
+    const prev = latest.current;
+    const next = change(prev);
+    if (next === prev) return prev;
+    try {
+      await persister.current?.commit(next);
+    } catch (e) {
+      persister.current?.schedule(latest.current);
+      throw new Error(failure, { cause: e });
+    }
+    const merge = (s: LedgerState) => (s === prev ? next : change(s));
+    latest.current = merge(latest.current);
+    setState(merge);
+    return prev;
+  }, []);
+
+  /**
+   * Delete one transaction, remembering it so re-syncs and re-imports leave it out (see
+   * `lib/txEdits`). Written to storage before the ledger updates; throws and changes nothing if
+   * the write fails. Resolves to the deleted transaction, for {@link restoreTransaction}.
+   */
+  const deleteTransaction = useCallback(async (id: string) => {
+    const prev = await commitChange((s) => deleteTx(s, id), 'The transaction could not be deleted; nothing was changed.');
+    return prev.transactions.find((t) => t.id === id);
+  }, [commitChange]);
+
+  /** Undo {@link deleteTransaction}, against the latest ledger; saved the same way. */
+  const restoreTransaction = useCallback(async (t: Transaction) => {
+    await commitChange((s) => restoreTx(s, t), 'The transaction could not be restored; nothing was changed.');
+  }, [commitChange]);
+
   /** Set the category of one or more transactions; `always` also makes it the rule for the first one's merchant. */
   const setCategory = useCallback((ids: string | string[], category: string, opts: { always?: boolean } = {}) =>
     setState((s) => {
@@ -341,7 +376,7 @@ export function useLedger(open: (options: OpenOptions) => Promise<Repository> = 
   const reset = useCallback(() => replaceAll(emptyLedger(), 'Local data could not be erased; nothing was changed.'), [replaceAll]);
 
   return {
-    state, loading, error, saveError, blocked, stale, retrySave, runSync, clearDemo, undoImport, setCategory, setAlways, setReviewed, editTransaction: editTx, setBudget, setRollover, renameAccount: renameAcct,
+    state, loading, error, saveError, blocked, stale, retrySave, runSync, clearDemo, undoImport, deleteTransaction, restoreTransaction, setCategory, setAlways, setReviewed, editTransaction: editTx, setBudget, setRollover, renameAccount: renameAcct,
     setAccountHidden: setHidden, addCategory, updateCategory, deleteCategory, saveRule, deleteRule, moveRule, applyRules,
     setRecurring, addRecurring, removeRecurring, setSettings, importBackup, reset,
   };

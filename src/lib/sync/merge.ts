@@ -1,5 +1,5 @@
 import { applyRules } from '../rules';
-import type { Account, Rule, Transaction } from '../types';
+import type { Account, DeletedTransaction, Rule, Transaction } from '../types';
 import type { SyncResult } from './types';
 
 export interface MergeOutcome {
@@ -28,7 +28,7 @@ const accountFields = (prev: Account) =>
  * Identity of a transaction within its provider: source + externalId, falling back to
  * the transaction id (which the built-in providers derive from a content hash).
  */
-export const dedupeKey = (t: Transaction) => JSON.stringify([t.source ?? '', t.externalId ?? t.id]);
+export const dedupeKey = (t: Pick<Transaction, 'id' | 'source' | 'externalId'>) => JSON.stringify([t.source ?? '', t.externalId ?? t.id]);
 
 /** Copy provider-reported fields from `incoming` onto `prev`; returns `prev` itself if nothing changed. */
 function refresh<T extends object>(prev: T, incoming: T, fields: readonly (keyof T)[]): T {
@@ -52,14 +52,19 @@ function freeId(id: string, taken: Map<string, unknown>) {
  * do not carry different externalIds. Matches only refresh provider-owned fields, so user
  * edits survive re-syncs. `incoming.balances` update account balances. New transactions
  * always arrive unreviewed, categorized (and possibly renamed) by the first matching rule
- * in `existing.rules`. `incoming.removed` is applied last and deletes the transactions with
- * that source and externalId; unknown ones are ignored.
+ * in `existing.rules`. New transactions the user deleted (by {@link dedupeKey}, see
+ * `existing.deletedTransactions`) are left out. `incoming.removed` is applied last and deletes the
+ * transactions with that source and externalId; unknown ones are ignored.
  */
 export function mergeSync(
-  existing: Pick<SyncResult, 'accounts' | 'transactions'> & { rules?: readonly Rule[] },
+  existing: Pick<SyncResult, 'accounts' | 'transactions'> & {
+    rules?: readonly Rule[];
+    deletedTransactions?: readonly DeletedTransaction[];
+  },
   incoming: SyncResult,
 ): MergeOutcome {
   const rules = existing.rules ?? [];
+  const deleted = new Set(existing.deletedTransactions?.map(dedupeKey));
   const accounts = new Map<string, Account>(existing.accounts.map((a) => [a.id, a]));
   for (const a of incoming.accounts) {
     const prev = accounts.get(a.id);
@@ -97,6 +102,7 @@ export function mergeSync(
       }
       continue;
     }
+    if (deleted.has(dedupeKey(t))) continue;
     // A different transaction already has this id (e.g. another source): keep both, and
     // remember the provider's id as externalId so the next sync still finds this one.
     const fresh = applyRules(rules, { ...t, reviewed: false });
