@@ -470,6 +470,31 @@ describe('opposite-sign duplicates', () => {
     expect(matchExisting(rows, stored.map((t) => ({ ...t, source: 'plaid' }))).oppositeSign.size).toBe(0);
   });
 
+  const teaAmounts = (state: LedgerState) => state.transactions.filter((t) => t.description === 'Tea').map((t) => t.amount).sort((x, y) => x - y);
+  const charge = 'Date,Description,Amount\n2026-10-01,Tea,-5';
+  const chargeThenRefund = 'Date,Description,Amount\n2026-10-01,Tea,-5\n2026-10-01,Tea,5';
+  const refundThenCharge = 'Date,Description,Amount\n2026-10-01,Tea,5\n2026-10-01,Tea,-5';
+
+  it('imports a refund listed before the charge it shares a day with, under an id of its own', async () => {
+    const a = await importCsv(emptyLedger('2026-10'), charge, { mapping });
+    const b = await importCsv(a.state, refundThenCharge, { mapping });
+    expect(b).toMatchObject({ added: 1, updated: 0 });
+    expect(b.provider.oppositeSign).toBe(0);
+    expect(teaAmounts(b.state)).toEqual([-5, 5]);
+    // The refund's id in the file is the first Tea id, which the stored charge already has.
+    const ids = b.state.transactions.map((t) => t.externalId);
+    expect(new Set(ids).size).toBe(2);
+    expect(b.state.transactions.find((t) => t.amount === -5)!.externalId).toBe(a.state.transactions[0].externalId);
+  });
+
+  it('adds nothing when a charge and its refund come back in the other order', async () => {
+    const a = await importCsv(emptyLedger('2026-10'), chargeThenRefund, { mapping });
+    const b = await importCsv(a.state, refundThenCharge, { mapping });
+    expect(b).toMatchObject({ added: 0, updated: 0, received: 2 });
+    expect(b.provider.oppositeSign).toBe(0);
+    expect(teaAmounts(b.state)).toEqual([-5, 5]);
+  });
+
   describe('transactions stored under the signed ids imports made before', () => {
     /** The ids imports used to give: a hash of the signed amount, for rows that occur once. */
     const signedId = (t: Transaction) => hashId(`${[t.date, t.description.toLowerCase(), t.amount.toFixed(2), t.accountId].join('|')}#0`);
@@ -478,6 +503,23 @@ describe('opposite-sign duplicates', () => {
       const transactions = state.transactions.map((t) => ({ ...t, id: `csv-${signedId(t)}`, externalId: signedId(t) }));
       return { ...state, transactions };
     }
+
+    it('imports a refund listed before the charge it shares a day with', async () => {
+      const state = await legacyState(mapping, charge);
+      const again = await importCsv(state, refundThenCharge, { mapping });
+      expect(again).toMatchObject({ added: 1, updated: 0 });
+      expect(again.provider.oppositeSign).toBe(0);
+      expect(teaAmounts(again.state)).toEqual([-5, 5]);
+      expect(new Set(again.state.transactions.map((t) => t.externalId)).size).toBe(2);
+    });
+
+    it('adds nothing when a charge and its refund come back in the other order', async () => {
+      const state = await legacyState(mapping, chargeThenRefund);
+      const again = await importCsv(state, refundThenCharge, { mapping });
+      expect(again).toMatchObject({ added: 0, updated: 0, received: 2 });
+      expect(again.provider.oppositeSign).toBe(0);
+      expect(teaAmounts(again.state)).toEqual([-5, 5]);
+    });
 
     it.each([['without', mapping], ['with', flip]])('adds nothing when the file is imported again %s flipped signs', async (_, m) => {
       const state = await legacyState(m);

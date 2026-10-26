@@ -200,29 +200,36 @@ export function detectDecimal(values: string[]): DecimalSeparator | undefined {
 export const slug = (s: string) =>
   s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'imported';
 
+const idKey = (date: string, description: string, amount: number, accountId: string) =>
+  [date, description.toLowerCase(), amount.toFixed(2), accountId].join('|');
+
 function hashedIds(signed: boolean) {
   const occurrences = new Map<string, number>();
   return (date: string, description: string, amount: number, accountId: string) => {
-    const key = [date, description.toLowerCase(), (signed ? amount : Math.abs(amount)).toFixed(2), accountId].join('|');
+    const key = idKey(date, description, signed ? amount : Math.abs(amount), accountId);
     const n = occurrences.get(key) ?? 0;
     occurrences.set(key, n + 1);
-    // The prefix keeps these ids apart from signed ones, which hash the same text for positive amounts.
-    return hashId(`${signed ? '' : 'unsigned|'}${key}#${n}`);
+    return signed ? hashId(`${key}#${n}`) : contentId(date, description, amount, accountId, n);
   };
 }
+
+/** The {@link contentIds} id of the row with these values that has `n` such rows before it. */
+export const contentId = (date: string, description: string, amount: number, accountId: string, n: number) =>
+  // The prefix keeps these ids apart from signed ones, which hash the same text for positive amounts.
+  hashId(`unsigned|${idKey(date, description, Math.abs(amount), accountId)}#${n}`);
 
 /**
  * Content-hash ids for CSV rows: the row's date, description, absolute amount and account plus
  * how many rows with the same values came before it in the file. Re-importing a file gives the
- * same ids whatever its signs, so dedupe applies even when signs were flipped, while genuine
- * same-day repeats (and rows differing only in sign) are kept apart.
+ * same ids whatever its signs, while genuine same-day repeats (and rows differing only in sign)
+ * are kept apart.
  */
 export const contentIds = () => hashedIds(false);
 
 /**
  * Ids as {@link contentIds} made them before LIB-379, from the signed amount. Transactions
- * imported then keep them, so mapped imports also compute these to find them (see
- * `matchExisting` in csvMapping), and {@link parseTransactionsCsv} still uses them.
+ * imported then keep them; mapped imports match stored rows by content, not id (see
+ * `matchExisting` in csvMapping), so only {@link parseTransactionsCsv} still uses them.
  */
 export const signedContentIds = () => hashedIds(true);
 

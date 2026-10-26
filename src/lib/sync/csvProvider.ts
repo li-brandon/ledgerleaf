@@ -23,9 +23,10 @@ export interface CsvImportOptions {
   /** `mapping.dateOrder` is the account's saved one, not chosen for this file (see {@link applyMapping}). */
   savedDateOrder?: boolean;
   /**
-   * The ledger's transactions. Rows matching one of the account's CSV transactions except for
-   * sign are left out (see {@link matchExisting}), and rows matching one stored under a signed id
-   * from before LIB-379 take its id. Without it, every row is imported as mapped.
+   * The ledger's transactions. Rows are matched by content to the account's CSV transactions,
+   * whatever their ids (including signed ids from before LIB-379): a row matching one takes its id,
+   * and one matching it except for sign is left out (see {@link matchExisting}). Without it, every
+   * row is imported as mapped.
    */
   existing?: readonly Transaction[];
 }
