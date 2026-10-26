@@ -40,6 +40,7 @@ function normalizeMapping(v: unknown): CsvMapping | undefined {
   for (const k of MAPPING_COLUMNS) if (typeof v[k] === 'string') out[k] = v[k];
   if (v.negate === true) out.negate = true;
   if (v.decimal === '.' || v.decimal === ',') out.decimal = v.decimal;
+  if (v.dateOrder === 'MDY' || v.dateOrder === 'DMY' || v.dateOrder === 'YMD') out.dateOrder = v.dateOrder;
   return out;
 }
 

@@ -1,7 +1,7 @@
-import { contentIds, detectDecimal, normalizeDate, parseCsvRows, readAmount, toCsv } from './csv';
-import type { CsvMapping, DecimalSeparator, LedgerState, Transaction } from './types';
+import { ambiguousDate, contentIds, detectDateOrder, detectDecimal, parseCsvRows, readAmount, readDate, toCsv } from './csv';
+import type { CsvMapping, DateOrder, DecimalSeparator, LedgerState, Transaction } from './types';
 
-export type { CsvMapping, DecimalSeparator };
+export type { CsvMapping, DateOrder, DecimalSeparator };
 
 /** A CSV file split into a header row and data rows. */
 export interface CsvTable {
@@ -18,9 +18,14 @@ export interface RowError {
   row: number;
   cells: string[];
   reason: string;
-  /** Set when the amount reads differently with each decimal separator and none is settled. */
-  kind?: 'ambiguous';
+  /**
+   * 'ambiguous' when the amount reads differently with each decimal separator and none is settled;
+   * 'ambiguous-date' when the date reads differently in each date order and none is settled.
+   */
+  kind?: RowErrorKind;
 }
+
+export type RowErrorKind = 'ambiguous' | 'ambiguous-date';
 
 export interface MappedRows {
   transactions: Transaction[];
@@ -43,7 +48,7 @@ export const FIELD_LABEL: Record<MappingField, string> = {
 export function readCsvTable(text: string): CsvTable {
   const rows = parseCsvRows(text);
   const width = Math.max(0, ...rows.map((r) => r.length));
-  const hasHeader = rows.length > 0 && !rows[0].some((c) => normalizeDate(c) !== null);
+  const hasHeader = rows.length > 0 && !rows[0].some((c) => readDate(c) !== null);
   const names = hasHeader ? rows.shift()! : [];
   const headers: string[] = [];
   for (let i = 0; i < width; i++) {
@@ -156,6 +161,20 @@ export function decimalFor(table: CsvTable, mapping: CsvMapping): DecimalSeparat
   return mapping.decimal ?? detectSeparator(table, mapping);
 }
 
+/** The order the file's mapped date cells are written in, if they show it (see {@link detectDateOrder}). */
+export function detectOrder(table: CsvTable, mapping: CsvMapping): DateOrder | undefined {
+  const i = table.headers.indexOf(mapping.date);
+  return detectDateOrder(i < 0 ? [] : table.rows.map((r) => r[i] ?? ''));
+}
+
+/**
+ * The order dates are read in: the mapping's, else the file's, else none, so ambiguous dates fail.
+ * The file's order only settles month against day first (see {@link readDate}).
+ */
+export function dateOrderFor(table: CsvTable, mapping: CsvMapping): DateOrder | undefined {
+  return mapping.dateOrder ?? detectOrder(table, mapping);
+}
+
 export interface MappingOptions {
   /**
    * `mapping.decimal` was loaded from a saved mapping rather than chosen for this import. It then
@@ -163,9 +182,11 @@ export interface MappingOptions {
    * same separator; otherwise those rows are ambiguous errors.
    */
   savedDecimal?: boolean;
+  /** Likewise for `mapping.dateOrder`: it settles ambiguous dates only if the file's dates show the same order. */
+  savedDateOrder?: boolean;
 }
 
-type Cell = { ok: true; value: number } | { ok: false; reason: string; kind?: 'ambiguous' };
+type Cell = { ok: true; value: number } | { ok: false; reason: string; kind?: RowErrorKind };
 
 function mappedAmount(get: (col?: string) => string, m: CsvMapping, decimal: DecimalSeparator | undefined, settled: boolean): Cell {
   const parse = (col: string | undefined, label: string): Cell => {
@@ -192,7 +213,8 @@ function mappedAmount(get: (col?: string) => string, m: CsvMapping, decimal: Dec
  * date, description or amount become {@link RowError}s instead, as do amounts that read
  * differently with each decimal separator when neither the mapping nor the file settles
  * one (see {@link decimalFor}), or when a saved separator is not backed by the file's rows (see
- * {@link MappingOptions}). Amounts are rounded to cents. Ids are content hashes
+ * {@link MappingOptions}). Dates that read differently in each date order are errors in the same
+ * way (see {@link dateOrderFor}). Amounts are rounded to cents. Ids are content hashes
  * (see {@link contentIds}), so mapping the same file again yields the same transactions.
  */
 export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: string, options: MappingOptions = {}): MappedRows {
@@ -205,12 +227,17 @@ export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: st
   const offset = table.hasHeader ? 2 : 1;
   const decimal = decimalFor(table, mapping);
   const settled = !options.savedDecimal || !mapping.decimal || detectSeparator(table, mapping) === mapping.decimal;
+  const order = dateOrderFor(table, mapping);
+  const datesSettled = !options.savedDateOrder || !mapping.dateOrder || detectOrder(table, mapping) === mapping.dateOrder;
 
   table.rows.forEach((cells, i) => {
     const get = (c?: string) => (c === undefined ? '' : (cells[col.get(c)!] ?? '').trim());
-    const fail = (reason: string, kind?: 'ambiguous') => errors.push({ row: i + offset, cells, reason, ...(kind && { kind }) });
-    const date = normalizeDate(get(mapping.date));
-    if (!date) return fail(get(mapping.date) ? `Unreadable date "${get(mapping.date)}"` : 'Missing date');
+    const fail = (reason: string, kind?: RowErrorKind) => errors.push({ row: i + offset, cells, reason, ...(kind && { kind }) });
+    const rawDate = get(mapping.date);
+    if (!rawDate) return fail('Missing date');
+    const date = !datesSettled && ambiguousDate(rawDate) ? 'ambiguous' : readDate(rawDate, order, !mapping.dateOrder);
+    if (date === 'ambiguous') return fail(`Ambiguous date "${rawDate}": choose the date order`, 'ambiguous-date');
+    if (!date) return fail(`Unreadable date "${rawDate}"`);
     const description = get(mapping.description).replace(/\s+/g, ' ');
     if (!description) return fail('Missing description');
     const amount = mappedAmount(get, mapping, decimal, settled);
