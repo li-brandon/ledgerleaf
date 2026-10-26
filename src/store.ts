@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createPersister, demoCounts, loadLedger, openRepository, withoutDemo, type Persister, type Repository,
+  type SaveStatus,
 } from './db';
 import { restoreBackup, type Backup, type RestoreMode } from './db/backup';
 import { renameAccount, setAccountHidden } from './lib/accounts';
@@ -32,6 +33,8 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
   const [state, setState] = useState<LedgerState>(emptyLedger);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** Why the last save failed; kept until a save succeeds, so it survives retries and new edits. */
+  const [saveError, setSaveError] = useState<string | null>(null);
   const latest = useRef(state);
   const persister = useRef<Persister | undefined>(undefined);
 
@@ -39,14 +42,28 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
     let cancelled = false;
     let repo: Repository | undefined;
     let saver: Persister | undefined;
+    let status: SaveStatus = { state: 'saved' };
     const flush = () => void saver?.flush();
     const onVisibility = () => document.visibilityState === 'hidden' && flush();
+    const onStatus = (s: SaveStatus) => {
+      status = s;
+      if (cancelled) return;
+      if (s.state === 'failed') setSaveError(messageOf(s.error));
+      else if (s.state === 'saved') setSaveError(null);
+    };
+    /** Unsaved changes are only in memory: ask before the tab closes, and try once more to save them. */
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!saver || status.state === 'saved') return;
+      void saver.retry();
+      e.preventDefault();
+      e.returnValue = '';
+    };
 
     (async () => {
       repo = await open();
       const loaded = !cancelled && (await loadLedger(repo));
       if (cancelled || !loaded) return repo.close();
-      saver = persister.current = createPersister(repo, loaded);
+      saver = persister.current = createPersister(repo, loaded, undefined, undefined, onStatus);
       latest.current = loaded;
       setState(loaded);
       setLoading(false);
@@ -57,11 +74,13 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
       setLoading(false);
     });
     addEventListener('pagehide', flush);
+    addEventListener('beforeunload', onBeforeUnload);
     document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
       cancelled = true;
       removeEventListener('pagehide', flush);
+      removeEventListener('beforeunload', onBeforeUnload);
       document.removeEventListener('visibilitychange', onVisibility);
       if (persister.current === saver) persister.current = undefined;
       const r = repo;
@@ -73,6 +92,9 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
     latest.current = state;
     persister.current?.schedule(state);
   }, [state]);
+
+  /** Write the latest ledger again now, after a background save failed. */
+  const retrySave = useCallback(() => void persister.current?.retry(), []);
 
   /**
    * Sync one provider, all or nothing: everything is fetched and validated, merged, and
@@ -247,10 +269,14 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
   const reset = useCallback(() => replaceAll(emptyLedger(), 'Local data could not be erased; nothing was changed.'), [replaceAll]);
 
   return {
-    state, loading, error, runSync, clearDemo, setCategory, setAlways, setReviewed, editTransaction: editTx, setBudget, setRollover, renameAccount: renameAcct,
+    state, loading, error, saveError, retrySave, runSync, clearDemo, setCategory, setAlways, setReviewed, editTransaction: editTx, setBudget, setRollover, renameAccount: renameAcct,
     setAccountHidden: setHidden, addCategory, updateCategory, deleteCategory, saveRule, deleteRule, moveRule, applyRules,
     setRecurring, addRecurring, removeRecurring, setSettings, importBackup, reset,
   };
+}
+
+function messageOf(e: unknown): string {
+  return e instanceof Error || e instanceof DOMException ? e.message : String(e);
 }
 
 export type Ledger = ReturnType<typeof useLedger>;

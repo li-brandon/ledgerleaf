@@ -106,6 +106,15 @@ export default function App() {
       </aside>
       <main id="main" ref={mainRef} tabIndex={-1}>
         {ledger.error && <p className="notice" role="alert">{ledger.error}</p>}
+        {ledger.saveError && (
+          <div className="notice error save-failed" role="alert">
+            <p>
+              <strong>Changes not saved.</strong> {ledger.saveError} They are kept in this tab until they can be
+              saved, so leave it open.
+            </p>
+            <button className="btn ghost" onClick={ledger.retrySave}>Retry</button>
+          </div>
+        )}
         {ledger.loading ? <p className="muted" role="status">Loading your ledger…</p> : <Page ledger={ledger} params={params} />}
       </main>
       <CommandPalette onTheme={(theme) => ledger.setSettings({ theme })} />
