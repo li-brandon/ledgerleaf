@@ -32,6 +32,8 @@ export type RowErrorKind = 'ambiguous' | 'ambiguous-date';
 export interface MappedRows {
   transactions: Transaction[];
   errors: RowError[];
+  /** Each table row's outcome, in table-row order: its transaction, or its error. */
+  rows: (Transaction | RowError)[];
 }
 
 /** Mappable fields, in the order the UI lists them. */
@@ -228,6 +230,7 @@ export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: st
   const idFor = contentIds();
   const transactions: Transaction[] = [];
   const errors: RowError[] = [];
+  const rows: (Transaction | RowError)[] = [];
   const offset = table.hasHeader ? 2 : 1;
   const decimal = decimalFor(table, mapping);
   const settled = !options.savedDecimal || !mapping.decimal || detectSeparator(table, mapping) === mapping.decimal;
@@ -236,7 +239,11 @@ export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: st
 
   table.rows.forEach((cells, i) => {
     const get = (c?: string) => (c === undefined ? '' : (cells[col.get(c)!] ?? '').trim());
-    const fail = (reason: string, kind?: RowErrorKind) => errors.push({ row: i + offset, cells, reason, ...(kind && { kind }) });
+    const fail = (reason: string, kind?: RowErrorKind) => {
+      const error: RowError = { row: i + offset, cells, reason, ...(kind && { kind }) };
+      errors.push(error);
+      rows.push(error);
+    };
     const rawDate = get(mapping.date);
     if (!rawDate) return fail('Missing date');
     const date = !datesSettled && ambiguousDate(rawDate) ? 'ambiguous' : readDate(rawDate, order, !mapping.dateOrder);
@@ -249,7 +256,7 @@ export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: st
     // Credit minus debit can pick up binary error; `|| 0` turns -0 into 0.
     const value = Math.round((mapping.negate ? -amount.value : amount.value) * 100) / 100 || 0;
     const externalId = idFor(date, description, value, accountId);
-    transactions.push({
+    const tx: Transaction = {
       id: `csv-${externalId}`,
       externalId,
       date,
@@ -257,9 +264,11 @@ export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: st
       amount: value,
       category: get(mapping.category) || 'Other',
       accountId,
-    });
+    };
+    transactions.push(tx);
+    rows.push(tx);
   });
-  return { transactions, errors };
+  return { transactions, errors, rows };
 }
 
 /** The rows that failed, as CSV in the original columns plus a trailing "Error" column. */

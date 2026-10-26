@@ -1,4 +1,5 @@
 import { useMemo, useState, type DragEvent } from 'react';
+import { fmtDay, fmtMoney } from '../format';
 import { DELIMITERS, detectDelimiter, normalizeDate, slug } from '../lib/csv';
 import {
   FIELD_LABEL, applyMapping, currencyDecimal, detectMapping, detectOrder, detectSeparator, errorRowsCsv, mappingProblem, readCsvTable,
@@ -405,24 +406,61 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
 
           <h3>Preview <span className="more muted">First {Math.min(PREVIEW_ROWS, table.rows.length)} of {table.rows.length} rows</span></h3>
           <div className="table-scroll">
-            <table className="tx preview">
-              <thead>
-                <tr>
-                  {table.headers.map((h) => (
-                    <th key={h} className={used.has(h) ? 'mapped' : ''}>
-                      {h}{used.has(h) && <span className="role">{FIELD_LABEL[used.get(h)!]}</span>}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {table.rows.slice(0, PREVIEW_ROWS).map((r, i) => (
-                  <tr key={i}>
-                    {table.headers.map((h, j) => <td key={h} className={used.has(h) ? 'mapped' : ''}>{r[j] ?? ''}</td>)}
+            {check ? (
+              <table className="tx preview">
+                <thead>
+                  <tr><th>Date</th><th>Description</th><th>Amount</th><th>Category</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                  {check.rows.slice(0, PREVIEW_ROWS).map((r, i) => {
+                    const cells = table.rows[i];
+                    const raw = (col?: string) => (col === undefined ? '' : (cells[table.headers.indexOf(col)] ?? ''));
+                    const rawAmount = mapping.amount !== undefined
+                      ? raw(mapping.amount)
+                      : (['debit', 'credit'] as const).filter((f) => mapping[f]).map((f) => `${mapping[f]}: ${raw(mapping[f])}`).join(', ');
+                    if ('reason' in r) {
+                      return (
+                        <tr key={i} className="rejected">
+                          <td>{raw(mapping.date)}</td>
+                          <td>{raw(mapping.description)}</td>
+                          <td className="num">{rawAmount}</td>
+                          <td>{raw(mapping.category)}</td>
+                          <td className="issue neg">{r.reason}</td>
+                        </tr>
+                      );
+                    }
+                    return (
+                      <tr key={i}>
+                        <td title={raw(mapping.date)}>{fmtDay(r.date)}</td>
+                        <td title={raw(mapping.description)}>{r.description}</td>
+                        <td title={rawAmount} className={`num ${r.amount > 0 ? 'pos' : ''}`}>{fmtMoney(r.amount)}</td>
+                        <td title={raw(mapping.category)}>{r.category}</td>
+                        <td className="issue">Ready</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            ) : (
+              <table className="tx preview">
+                <thead>
+                  <tr>
+                    {table.headers.map((h) => (
+                      <th key={h} className={used.has(h) ? 'mapped' : ''}>
+                        {h}{used.has(h) && <span className="role">{FIELD_LABEL[used.get(h)!]}</span>}
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {table.rows.slice(0, PREVIEW_ROWS).map((r, i) => (
+                    <tr key={i}>
+                      {table.headers.map((h, j) => <td key={h} className={used.has(h) ? 'mapped' : ''}>{r[j] ?? ''}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
 
           {(mappingError || nameError) && <p className="notice error" role="alert">{mappingError ?? nameError}</p>}

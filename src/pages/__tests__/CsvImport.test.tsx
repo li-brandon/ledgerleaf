@@ -405,4 +405,80 @@ describe('CSV import flow', () => {
     await waitFor(() => expect(within(card()).queryByText('fernway_checking.csv')).toBeNull());
     expect((await stored()).transactions).toHaveLength(0);
   });
+
+  describe('preview', () => {
+    const preview = () => within(card().querySelector<HTMLTableElement>('table.preview')!);
+    /** The preview's cells for the row whose description is `description`. */
+    const previewRow = (description: string) => within(preview().getByText(description).closest('tr')!);
+
+    it('shows the parsed amount of a comma-decimal row, with the raw text on hover', async () => {
+      const user = userEvent.setup();
+      await renderApp(undefined, '#/connections');
+      await user.upload(fileInput(), csvFile('Date;Description;Amount\n31.12.2026;Kaffe;-12,50\n01.10.2026;Lön;25.000,00', 'sek.csv'));
+      await within(card()).findByText('sek.csv');
+
+      expect(preview().getAllByRole('columnheader').map((th) => th.textContent)).toEqual(['Date', 'Description', 'Amount', 'Category', 'Status']);
+      const kaffe = previewRow('Kaffe');
+      expect(kaffe.getByText('-$12.50')).toHaveAttribute('title', '-12,50');
+      expect(kaffe.getByText('Thu, Dec 31, 2026')).toHaveAttribute('title', '31.12.2026');
+      expect(kaffe.getByText('Ready')).toBeInTheDocument();
+      expect(previewRow('Lön').getByText('$25,000.00')).toHaveAttribute('title', '25.000,00');
+    });
+
+    it('shows both raw cells on hover for debit and credit columns', async () => {
+      const user = userEvent.setup();
+      await renderApp(undefined, '#/connections');
+      await user.upload(fileInput(), csvFile('Date,Memo,Withdrawal,Deposit\n2026-10-01,Coffee,4.50,', 'card.csv'));
+      await within(card()).findByText('card.csv');
+      expect(previewRow('Coffee').getByText('-$4.50')).toHaveAttribute('title', 'Withdrawal: 4.50, Deposit: ');
+    });
+
+    it('marks rows that will be rejected with the reason, before import', async () => {
+      const user = userEvent.setup();
+      await renderApp(undefined, '#/connections');
+      await user.upload(fileInput(), csvFile('Date,Description,Amount\n2026-10-01,Broken,abc\n2026-10-02,Pay,5'));
+      const ui = within(card());
+      await ui.findByText('fernway_checking.csv');
+
+      const broken = preview().getByText('Broken').closest('tr')!;
+      expect(broken).toHaveClass('rejected');
+      expect(within(broken).getByText('Unreadable amount "abc"')).toBeInTheDocument();
+      expect(previewRow('Pay').getByText('$5.00')).toBeInTheDocument();
+      expect(previewRow('Pay').getByText('Ready').closest('tr')).not.toHaveClass('rejected');
+      expect(ui.getByRole('button', { name: 'Import 1 rows' })).toBeInTheDocument();
+    });
+
+    it('updates live when flip signs, the decimal separator, the date order or the delimiter change', async () => {
+      const user = userEvent.setup();
+      await renderApp(undefined, '#/connections');
+      await user.upload(fileInput(), csvFile('Date;Description;Amount\n01/02/2026;Rent;"1,234"\n2026-10-01;Tea;-3', 'eu.csv'));
+      const ui = within(card());
+      await ui.findByText('eu.csv');
+
+      expect(previewRow('Tea').getByText('-$3.00')).toBeInTheDocument();
+      await user.click(ui.getByLabelText(/flip signs/));
+      expect(previewRow('Tea').getByText('$3.00')).toBeInTheDocument();
+      expect(previewRow('Tea').queryByText('-$3.00')).toBeNull();
+      await user.click(ui.getByLabelText(/flip signs/));
+
+      // Ambiguous date and amount: rejected until both are chosen.
+      expect(previewRow('Rent').getByText('Ambiguous date "01/02/2026": choose the date order')).toBeInTheDocument();
+      await user.selectOptions(ui.getByLabelText('Date order'), 'DMY');
+      expect(previewRow('Rent').getByText('Ambiguous amount "1,234": choose the decimal separator')).toBeInTheDocument();
+      await user.selectOptions(ui.getByLabelText('Decimal separator'), ',');
+      expect(previewRow('Rent').getByText('Sun, Feb 1, 2026')).toBeInTheDocument();
+      expect(previewRow('Rent').getByText('$1.23')).toBeInTheDocument();
+      await user.selectOptions(ui.getByLabelText('Decimal separator'), '.');
+      expect(previewRow('Rent').getByText('$1,234.00')).toBeInTheDocument();
+      await user.selectOptions(ui.getByLabelText('Date order'), 'MDY');
+      expect(previewRow('Rent').getByText('Fri, Jan 2, 2026')).toBeInTheDocument();
+
+      // Read with commas the columns don't fit, so there are no parsed rows; back on semicolons they return.
+      await user.selectOptions(ui.getByLabelText('Delimiter'), 'Comma');
+      expect(preview().queryByText('-$3.00')).toBeNull();
+      expect(preview().queryByRole('columnheader', { name: 'Status' })).toBeNull();
+      await user.selectOptions(ui.getByLabelText('Delimiter'), 'Semicolon');
+      expect(previewRow('Tea').getByText('-$3.00')).toBeInTheDocument();
+    });
+  });
 });
