@@ -1,8 +1,8 @@
 import { useMemo, useState, type DragEvent } from 'react';
 import { slug } from '../lib/csv';
 import {
-  FIELD_LABEL, applyMapping, errorRowsCsv, mappingFor, mappingProblem, readCsvTable, withImportMapping,
-  type CsvMapping, type CsvTable, type MappingField, type RowError,
+  FIELD_LABEL, applyMapping, detectSeparator, errorRowsCsv, mappingFor, mappingProblem, readCsvTable, withImportMapping,
+  type CsvMapping, type CsvTable, type DecimalSeparator, type MappingField, type RowError,
 } from '../lib/csvMapping';
 import { CsvImportProvider } from '../lib/sync';
 import type { Account, AccountType } from '../lib/types';
@@ -19,6 +19,8 @@ const ACCOUNT_TYPES: { type: AccountType; label: string }[] = [
   { type: 'investment', label: 'Investment' },
   { type: 'loan', label: 'Loan' },
 ];
+
+const DECIMAL_LABEL: Record<DecimalSeparator, string> = { '.': 'Point: 1,234.56', ',': 'Comma: 1.234,56' };
 
 interface Loaded { name: string; text: string; table: CsvTable }
 interface Summary { file: string; account: string; added: number; duplicates: number; errors: RowError[]; table: CsvTable }
@@ -131,6 +133,7 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
     () => (file && mapping && !mappingError ? applyMapping(file.table, mapping, 'preview') : null),
     [file, mapping, mappingError],
   );
+  const detected = useMemo(() => (file && mapping ? detectSeparator(file.table, mapping) : undefined), [file, mapping]);
 
   async function runImport() {
     if (!file || !mapping || mappingError || nameError) return;
@@ -265,6 +268,15 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
               </select>
             </label>
             {mapping.amount !== undefined ? columnSelect('amount', false) : <>{columnSelect('debit', true)}{columnSelect('credit', true)}</>}
+            <label className="field">
+              <span>Decimal separator</span>
+              <select value={mapping.decimal ?? ''}
+                onChange={(e) => setMapping({ ...mapping, decimal: (e.target.value || undefined) as DecimalSeparator | undefined })}>
+                <option value="">Detect ({detected ? DECIMAL_LABEL[detected] : 'unclear from the rows'})</option>
+                <option value=".">{DECIMAL_LABEL['.']}</option>
+                <option value=",">{DECIMAL_LABEL[',']}</option>
+              </select>
+            </label>
             {columnSelect('category', true)}
             <label className="check">
               <input type="checkbox" checked={!!mapping.negate}

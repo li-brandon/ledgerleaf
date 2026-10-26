@@ -1,6 +1,6 @@
 import { csvCell } from './csvExport';
 import { hashId } from './sync/hash';
-import type { Account, Transaction } from './types';
+import type { Account, DecimalSeparator, Transaction } from './types';
 
 /**
  * Split CSV text into rows of cells. Handles quoted fields, escaped quotes and CRLF. A quote
@@ -64,18 +64,54 @@ function fmt(y: number, mo: number, d: number): string | null {
   return dt.toISOString().slice(0, 10);
 }
 
+/** Minus signs and dashes banks and spreadsheets write in place of "-": hyphens, figure/en/em dashes, U+2212, small and fullwidth hyphen-minus. */
+const MINUS = /[‐-―−﹘﹣－]/g;
+
+const AMOUNT = {
+  '.': /^[-+]?([1-9]\d{0,2}(,\d{3})+|\d*)(\.\d+)?$/,
+  ',': /^[-+]?([1-9]\d{0,2}(\.\d{3})+|\d*)(,\d+)?$/,
+};
+
 /**
- * Parses "$1,234.50", "-12", "(45.00)", "-$5", "€12.00", "1,234.56-" and "12.00 USD".
- * Commas are thousands separators. Returns null if not numeric.
+ * Parses "$1,234.50", "-12", "(45.00)", "-$5", "€12.00", "1,234.56-" and "12.00 USD", or with
+ * `decimal` ",": "1.234,56" and "12,50". The other separator groups thousands, in threes.
+ * Rounds to cents. Returns null if not numeric.
  */
-export function parseAmount(raw: string): number | null {
-  let s = raw.trim().replace(/\b[A-Z]{3}\b|[$€£¥\s,]/g, '');
+export function parseAmount(raw: string, decimal: DecimalSeparator = '.'): number | null {
+  let s = raw.trim().replace(MINUS, '-').replace(/\b[A-Z]{3}\b|[$€£¥\s]/g, '');
   let neg = false;
   if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); }
   if (/^[^-+]*-$/.test(s)) { neg = !neg; s = s.slice(0, -1); }
-  if (!/^[-+]?\d*\.?\d+$/.test(s)) return null;
-  const n = Number(s);
-  return neg ? -n : n;
+  if (!/\d/.test(s) || !AMOUNT[decimal].test(s)) return null;
+  const plain = s.replaceAll(decimal === '.' ? ',' : '.', '').replace(',', '.');
+  // Rounding the "e2"-shifted text avoids binary error: 1.005 rounds to 1.01. Halves round away from zero.
+  const n = Math.sign(Number(plain)) * Math.round(Math.abs(Number(`${plain}e2`))) / 100;
+  return (neg ? -n : n) || 0;
+}
+
+/**
+ * Read an amount whose decimal separator may be unknown. Without `decimal`, a value is read
+ * if it means the same with either separator ("-12", "12.50", "1.234,56"); "1,234" could
+ * be 1234 or 1.234, so it is 'ambiguous'. Null if not numeric.
+ */
+export function readAmount(raw: string, decimal?: DecimalSeparator): number | null | 'ambiguous' {
+  if (decimal) return parseAmount(raw, decimal);
+  const point = parseAmount(raw, '.');
+  const comma = parseAmount(raw, ',');
+  return point !== null && comma !== null && point !== comma ? 'ambiguous' : point ?? comma;
+}
+
+/**
+ * The decimal separator `values` are written with: the one separator that some value can
+ * only be read with ("12,50", "1,234.56"). Undefined when no value tells, or values disagree.
+ */
+export function detectDecimal(values: string[]): DecimalSeparator | undefined {
+  const seen = new Set<DecimalSeparator>();
+  for (const v of values) {
+    const point = parseAmount(v, '.') !== null;
+    if (point !== (parseAmount(v, ',') !== null)) seen.add(point ? '.' : ',');
+  }
+  return seen.size === 1 ? [...seen][0] : undefined;
 }
 
 export const slug = (s: string) =>
@@ -115,7 +151,8 @@ const COLUMNS = ['date', 'description', 'amount', 'category', 'account'] as cons
 
 /**
  * Parse CSV with columns date,description,amount,category,account (header optional,
- * header order respected). Ids hash the row content plus its occurrence index, so
+ * header order respected). The decimal separator is detected from the amounts; rows whose
+ * amount stays ambiguous are skipped (see {@link readAmount}). Ids hash the row content plus its occurrence index, so
  * re-importing the same file dedupes while genuine same-day repeats are kept.
  */
 export function parseTransactionsCsv(text: string): CsvParseResult {
@@ -128,13 +165,14 @@ export function parseTransactionsCsv(text: string): CsvParseResult {
   const accounts = new Map<string, Account>();
   const transactions: Transaction[] = [];
   const idFor = contentIds();
+  const decimal = detectDecimal(idx.amount >= 0 ? rows.map((r) => r[idx.amount] ?? '') : []);
   let skipped = 0;
   for (const r of rows) {
     const get = (c: (typeof COLUMNS)[number]) => (idx[c] >= 0 ? (r[idx[c]] ?? '').trim() : '');
     const date = normalizeDate(get('date'));
-    const amount = parseAmount(get('amount'));
+    const amount = readAmount(get('amount'), decimal);
     const description = get('description');
-    if (!date || amount === null || !description) { skipped++; continue; }
+    if (!date || typeof amount !== 'number' || !description) { skipped++; continue; }
     const accountName = get('account') || 'Imported';
     const accountId = `csv-${slug(accountName)}`;
     if (!accounts.has(accountId)) accounts.set(accountId, { id: accountId, name: accountName, type: 'checking' });

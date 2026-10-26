@@ -1,7 +1,7 @@
-import { contentIds, normalizeDate, parseAmount, parseCsvRows, toCsv } from './csv';
-import type { CsvMapping, LedgerState, Transaction } from './types';
+import { contentIds, detectDecimal, normalizeDate, parseCsvRows, readAmount, toCsv } from './csv';
+import type { CsvMapping, DecimalSeparator, LedgerState, Transaction } from './types';
 
-export type { CsvMapping };
+export type { CsvMapping, DecimalSeparator };
 
 /** A CSV file split into a header row and data rows. */
 export interface CsvTable {
@@ -127,13 +127,23 @@ export function mappingFor(headers: string[], saved?: CsvMapping): CsvMapping {
   return saved && !mappingProblem(saved, headers) ? saved : detectMapping(headers);
 }
 
+/**
+ * The decimal separator the file's mapped amount, debit and credit cells are written with,
+ * if they show it (see {@link detectDecimal}).
+ */
+export function detectSeparator(table: CsvTable, mapping: CsvMapping): DecimalSeparator | undefined {
+  const cols = [mapping.amount, mapping.debit, mapping.credit].map((c) => (c === undefined ? -1 : table.headers.indexOf(c)));
+  return detectDecimal(table.rows.flatMap((r) => cols.filter((i) => i >= 0).map((i) => r[i] ?? '')));
+}
+
 type Cell = { ok: true; value: number } | { ok: false; reason: string };
 
-function readAmount(get: (col?: string) => string, m: CsvMapping): Cell {
+function mappedAmount(get: (col?: string) => string, m: CsvMapping, decimal?: DecimalSeparator): Cell {
   const parse = (col: string | undefined, label: string): Cell => {
     const raw = get(col);
     if (!raw) return { ok: true, value: 0 };
-    const value = parseAmount(raw);
+    const value = readAmount(raw, decimal);
+    if (value === 'ambiguous') return { ok: false, reason: `Ambiguous ${label} "${raw}": choose the decimal separator` };
     return value === null ? { ok: false, reason: `Unreadable ${label} "${raw}"` } : { ok: true, value };
   };
   if (m.amount !== undefined) {
@@ -150,7 +160,9 @@ function readAmount(get: (col?: string) => string, m: CsvMapping): Cell {
 
 /**
  * Turn table rows into transactions for `accountId` using `mapping`. Rows with a bad
- * date, description or amount become {@link RowError}s instead. Ids are content hashes
+ * date, description or amount become {@link RowError}s instead, as do amounts that read
+ * differently with each decimal separator when the mapping does not set one and the file
+ * does not show it. Amounts are rounded to cents. Ids are content hashes
  * (see {@link contentIds}), so mapping the same file again yields the same transactions.
  */
 export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: string): MappedRows {
@@ -161,6 +173,7 @@ export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: st
   const transactions: Transaction[] = [];
   const errors: RowError[] = [];
   const offset = table.hasHeader ? 2 : 1;
+  const decimal = mapping.decimal ?? detectSeparator(table, mapping);
 
   table.rows.forEach((cells, i) => {
     const get = (c?: string) => (c === undefined ? '' : (cells[col.get(c)!] ?? '').trim());
@@ -169,10 +182,10 @@ export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: st
     if (!date) return fail(get(mapping.date) ? `Unreadable date "${get(mapping.date)}"` : 'Missing date');
     const description = get(mapping.description).replace(/\s+/g, ' ');
     if (!description) return fail('Missing description');
-    const amount = readAmount(get, mapping);
+    const amount = mappedAmount(get, mapping, decimal);
     if (!amount.ok) return fail(amount.reason);
-    // `|| 0` turns -0 into 0.
-    const value = (mapping.negate ? -amount.value : amount.value) || 0;
+    // Credit minus debit can pick up binary error; `|| 0` turns -0 into 0.
+    const value = Math.round((mapping.negate ? -amount.value : amount.value) * 100) / 100 || 0;
     const externalId = idFor(date, description, value, accountId);
     transactions.push({
       id: `csv-${externalId}`,
