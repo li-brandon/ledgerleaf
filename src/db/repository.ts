@@ -40,6 +40,8 @@ export interface Meta {
   settings?: LedgerState['settings'];
   /** CSV imports that can be undone, newest first. */
   importBatches?: LedgerState['importBatches'];
+  /** Tombstones of transactions the user deleted. */
+  deletedTransactions?: LedgerState['deletedTransactions'];
   /**
    * Record keys (see {@link recordId}) of each store in ledger order. Stores return records
    * in key order, but order is meaningful (newest-first transactions, rule precedence).

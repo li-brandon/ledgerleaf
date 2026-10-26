@@ -1,6 +1,7 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import type { PageProps } from '../App';
 import { downloadFile, rememberTxFilters } from '../browser';
+import Toast from '../components/Toast';
 import TxDetail from '../components/TxDetail';
 import { csvFilename } from '../db/backup';
 import { displayCurrency, fmtDay, fmtMoney } from '../format';
@@ -10,6 +11,7 @@ import {
   PAGE_SIZE, activeFilterCount, applyFilters, filtersHref, groupByDate, hasFilters, parseFilters, totals,
 } from '../lib/txFilters';
 import { moveSelection, txKeyAction } from '../lib/txKeys';
+import type { Transaction } from '../lib/types';
 import EmptyState from './EmptyState';
 
 /** How long the URL waits for typing to settle before it is updated. */
@@ -86,6 +88,10 @@ export default function Transactions({ ledger, params }: PageProps) {
   const bulkCategoryRef = useRef<HTMLSelectElement>(null);
   const bulkAllRef = useRef<HTMLInputElement>(null);
   const [focusCategory, setFocusCategory] = useState(false);
+  // After a delete: the toast offering to undo it (or saying the undo failed), keyed so each one gets its own timer.
+  const [toast, setToast] = useState<{ key: number; text: string; deleted?: Transaction; error?: boolean }>();
+  const toasts = useRef(0);
+  const showToast = (t: Omit<NonNullable<typeof toast>, 'key'>) => setToast({ ...t, key: ++toasts.current });
 
   useEffect(() => {
     if (bulkAllRef.current) bulkAllRef.current.indeterminate = picked.length > 0 && !allPicked;
@@ -109,6 +115,17 @@ export default function Transactions({ ledger, params }: PageProps) {
       if (on) next.add(id); else next.delete(id);
       return next;
     });
+  const onDeleted = (t: Transaction) => {
+    setActiveId(undefined);
+    showToast({ text: `Deleted ${t.description}.`, deleted: t });
+  };
+  const undoDelete = (t: Transaction) => {
+    setToast(undefined);
+    const why = ledger.state.accounts.some((a) => a.id === t.accountId) ? 'its import was undone' : 'its account was removed';
+    ledger.restoreTransaction(t)
+      .then((restored) => restored || showToast({ text: `Couldn't restore ${t.description}: ${why}.`, error: true }))
+      .catch((e) => showToast({ text: e instanceof Error ? e.message : String(e), error: true }));
+  };
   const pickAll = (on: boolean) => setChecked(on ? new Set(shownIds) : new Set());
   const bulkCategory = (name: string) => name && ledger.setCategory(picked, name);
   const showPicker = (el: HTMLSelectElement | null) => {
@@ -315,7 +332,7 @@ export default function Transactions({ ledger, params }: PageProps) {
                 {active && (
                   <TxDetail
                     key={active.id} tx={active} accountName={accountName[active.accountId] ?? '—'} categories={categories}
-                    rules={ledger.state.rules} ledger={ledger} categoryRef={categoryRef} onClose={close}
+                    rules={ledger.state.rules} ledger={ledger} categoryRef={categoryRef} onClose={close} onDeleted={onDeleted}
                   />
                 )}
               </div>
@@ -331,6 +348,12 @@ export default function Transactions({ ledger, params }: PageProps) {
             </>
           )}
         </section>
+      )}
+      {toast && (
+        <Toast
+          key={toast.key} text={toast.text} error={toast.error} onDone={() => setToast(undefined)}
+          onUndo={toast.deleted && (() => undoDelete(toast.deleted!))}
+        />
       )}
     </>
   );

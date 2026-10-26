@@ -14,16 +14,20 @@ interface Props {
   ledger: Ledger;
   categoryRef: Ref<HTMLSelectElement>;
   onClose: () => void;
+  /** The transaction was deleted (and saved); the panel should close. */
+  onDeleted: (tx: Transaction) => void;
 }
 
 /**
  * Edit one transaction: merchant, category (optionally as a rule for the merchant), notes
- * and reviewed. Render with `key={tx.id}` so drafts reset when the transaction changes.
- * Text fields are saved when they lose focus or on Enter (merchant).
+ * and reviewed; or delete it, after a confirmation. Render with `key={tx.id}` so drafts reset
+ * when the transaction changes. Text fields are saved when they lose focus or on Enter (merchant).
  */
-export default function TxDetail({ tx, accountName, categories, rules, ledger, categoryRef, onClose }: Props) {
+export default function TxDetail({ tx, accountName, categories, rules, ledger, categoryRef, onClose, onDeleted }: Props) {
   const [merchant, setMerchant] = useState(tx.merchant ?? tx.description);
   const [notes, setNotes] = useState(tx.notes ?? '');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const rule = merchantRule(rules, tx);
   const always = !!rule && rule.categoryId === tx.categoryId;
 
@@ -32,6 +36,19 @@ export default function TxDetail({ tx, accountName, categories, rules, ledger, c
     if (!merchant.trim()) setMerchant(tx.description);
   };
   const saveNotes = () => ledger.editTransaction(tx.id, { notes });
+
+  async function remove() {
+    if (!confirm(`Delete ${tx.description} (${fmtMoney(tx.amount)} on ${fmtDay(tx.date)})? Re-importing or syncing won't add it back.`)) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      const deleted = await ledger.deleteTransaction(tx.id);
+      if (deleted) return onDeleted(deleted);
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : String(e));
+    }
+    setDeleting(false);
+  }
 
   // Escape leaves a field (saving it on blur); list shortcuts ignore keys typed in fields.
   const onKeyDown = (e: KeyboardEvent) => {
@@ -82,6 +99,11 @@ export default function TxDetail({ tx, accountName, categories, rules, ledger, c
       <label className="field">Notes
         <textarea rows={3} value={notes} placeholder="Add a note…" onChange={(e) => setNotes(e.target.value)} onBlur={saveNotes} />
       </label>
+
+      {deleteError && <p className="notice error" role="alert">{deleteError}</p>}
+      <button type="button" className="danger tx-delete" onClick={() => void remove()} disabled={deleting}>
+        Delete transaction
+      </button>
 
       <p className="tx-keys muted" aria-hidden>
         <kbd>↑</kbd><kbd>↓</kbd> move · <kbd>r</kbd> reviewed · <kbd>c</kbd> category · <kbd>Esc</kbd> close

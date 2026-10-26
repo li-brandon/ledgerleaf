@@ -6,7 +6,10 @@
  */
 import { normalizeLedger } from '../lib/migrate';
 import { normalizeSettings } from '../lib/settings';
-import { SCHEMA_VERSION, type ImportBatch, type LedgerState, type RecurringSettings } from '../lib/types';
+import { dedupeKey } from '../lib/sync/merge';
+import {
+  SCHEMA_VERSION, type DeletedTransaction, type ImportBatch, type LedgerState, type RecurringSettings,
+} from '../lib/types';
 import { MODEL_NAMES, recordId, type LedgerRecords, type ModelName } from './repository';
 
 export const BACKUP_FORMAT = 'ledgerleaf-backup';
@@ -14,7 +17,9 @@ export const BACKUP_FORMAT = 'ledgerleaf-backup';
 export const BACKUP_VERSION = 1;
 
 /** Everything in the ledger that is not a store of records. */
-export type BackupMeta = Pick<LedgerState, 'lastSync' | 'syncs' | 'importMappings' | 'recurring' | 'settings' | 'importBatches'>;
+export type BackupMeta = Pick<
+  LedgerState, 'lastSync' | 'syncs' | 'importMappings' | 'recurring' | 'settings' | 'importBatches' | 'deletedTransactions'
+>;
 
 export interface Backup {
   format: typeof BACKUP_FORMAT;
@@ -37,14 +42,14 @@ export const STORE_LABELS: Record<ModelName, string> = {
 };
 
 export function makeBackup(state: LedgerState, now = new Date()): Backup {
-  const { lastSync, syncs, importMappings, recurring, settings, importBatches } = state;
+  const { lastSync, syncs, importMappings, recurring, settings, importBatches, deletedTransactions } = state;
   return {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     schemaVersion: SCHEMA_VERSION,
     exportedAt: now.toISOString(),
     stores: Object.fromEntries(MODEL_NAMES.map((n) => [n, state[n]])) as LedgerRecords,
-    meta: { lastSync, syncs, importMappings, recurring, settings, importBatches },
+    meta: { lastSync, syncs, importMappings, recurring, settings, importBatches, deletedTransactions },
   };
 }
 
@@ -134,6 +139,8 @@ export function parseBackup(text: string): ParseResult {
       recurring: isObject(meta.recurring) ? (meta.recurring as unknown as RecurringSettings) : undefined,
       settings: isObject(meta.settings) ? normalizeSettings(meta.settings) : undefined,
       importBatches: Array.isArray(meta.importBatches) ? (meta.importBatches as BackupMeta['importBatches']) : undefined,
+      deletedTransactions: Array.isArray(meta.deletedTransactions)
+        ? (meta.deletedTransactions as BackupMeta['deletedTransactions']) : undefined,
     },
   };
   return { ok: true, backup, counts: storeCounts(backup.stores) };
@@ -158,6 +165,13 @@ function mergeBatches(a: ImportBatch[] = [], b: ImportBatch[] = []): ImportBatch
   return [...a, ...b.filter((x) => !ids.has(x.id))].sort((x, y) => y.at.localeCompare(x.at));
 }
 
+/** Tombstones of both, except for transactions `current` holds (it wins). */
+function mergeDeleted(current: LedgerState, b: DeletedTransaction[] = []): DeletedTransaction[] {
+  const a = current.deletedTransactions ?? [];
+  const skip = new Set([...current.transactions, ...a].map(dedupeKey));
+  return [...a, ...b.filter((d) => !skip.has(dedupeKey(d)))];
+}
+
 export interface RestoreResult {
   state: LedgerState;
   /** Records taken from the backup, per store (in merge mode, those whose key was new). */
@@ -170,7 +184,8 @@ export interface RestoreResult {
  * day for balance history) it lacks; where both have something, `current` wins, settings
  * included. A transaction in both keeps `current`'s record, `importBatchIds` too: claims are not
  * unioned, so undoing a backup's batch never deletes a row `current` did not attribute to it.
- * Either way the result is normalized like a freshly loaded ledger.
+ * Deleted-transaction tombstones are unioned, so a backup never brings back a transaction
+ * `current` deleted; a backup's tombstone of a transaction `current` holds is dropped. Either way the result is normalized like a freshly loaded ledger.
  */
 export function restoreBackup(current: LedgerState, backup: Backup, mode: RestoreMode): RestoreResult {
   const { stores, meta } = backup;
@@ -178,7 +193,9 @@ export function restoreBackup(current: LedgerState, backup: Backup, mode: Restor
     const state = normalizeLedger({ ...stores, ...meta, version: SCHEMA_VERSION });
     return { state, added: storeCounts(stores) };
   }
-  const merged = Object.fromEntries(MODEL_NAMES.map((n) => [n, mergeStore(n, current[n], stores[n])])) as LedgerRecords;
+  const deleted = new Set(current.deletedTransactions?.map(dedupeKey));
+  const incoming = { ...stores, transactions: stores.transactions.filter((t) => !deleted.has(dedupeKey(t))) };
+  const merged = Object.fromEntries(MODEL_NAMES.map((n) => [n, mergeStore(n, current[n], incoming[n])])) as LedgerRecords;
   const added = Object.fromEntries(MODEL_NAMES.map((n) => [n, merged[n].length - current[n].length])) as StoreCounts;
   const lastSync = [current.lastSync, meta.lastSync].filter(Boolean).sort().at(-1);
   const state = normalizeLedger({
@@ -190,6 +207,7 @@ export function restoreBackup(current: LedgerState, backup: Backup, mode: Restor
     recurring: mergeRecurring(current.recurring, meta.recurring),
     settings: current.settings ?? meta.settings,
     importBatches: mergeBatches(current.importBatches, meta.importBatches),
+    deletedTransactions: mergeDeleted(current, meta.deletedTransactions),
   });
   return { state, added };
 }

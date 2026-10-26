@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emptyLedger } from '../../lib/migrate';
 import { DEFAULT_SETTINGS } from '../../lib/settings';
+import { deleteTransaction } from '../../lib/txEdits';
 import { csvLedger, renderApp, stored } from '../../test/app';
 
 // "10/13/2026" shows the dates are month first.
@@ -616,5 +617,28 @@ describe('undo import', () => {
     expect(await stored()).toEqual(before);
     // The ledger on screen still holds the import.
     expect(screen.getByText(/2 accounts, 4 transactions/)).toBeInTheDocument();
+  });
+});
+
+describe('re-importing a file after deleting one of its rows', () => {
+  it('skips the deleted row in the preview, the import and its counts', async () => {
+    const user = userEvent.setup();
+    const text = 'date,description,amount\n2026-10-01,Tea,-3\n2026-10-02,Rent,-1650\n2026-10-03,Lunch,-12';
+    const ledger = await csvLedger(text);
+    await renderApp(deleteTransaction(ledger, ledger.transactions.find((t) => t.description === 'Rent')!.id), '#/connections');
+
+    await user.upload(fileInput(), csvFile(text));
+    const ui = within(card());
+    await user.selectOptions(await ui.findByLabelText('Account'), 'Everyday');
+    expect(ui.getByText('1 row will be skipped: you deleted that transaction earlier.')).toBeInTheDocument();
+    expect(ui.getByText('Deleted earlier')).toBeInTheDocument();
+    expect(ui.getByText('2 rows ready to import.')).toBeInTheDocument();
+    await user.click(ui.getByRole('button', { name: 'Import 2 rows' }));
+
+    const summary = await ui.findByRole('status');
+    expect(within(summary).getByText('Added').nextSibling).toHaveTextContent('0');
+    expect(within(summary).getByText('Duplicates skipped').nextSibling).toHaveTextContent('2');
+    expect(within(summary).getByText('Deleted transactions skipped').nextSibling).toHaveTextContent('1');
+    expect((await stored()).transactions.map((t) => t.description).sort()).toEqual(['Lunch', 'Tea']);
   });
 });
