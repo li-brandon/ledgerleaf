@@ -1,5 +1,5 @@
 import { useMemo, useState, type DragEvent } from 'react';
-import { slug } from '../lib/csv';
+import { normalizeDate, slug } from '../lib/csv';
 import {
   FIELD_LABEL, applyMapping, currencyDecimal, detectOrder, detectSeparator, errorRowsCsv, mappingFor, mappingProblem, readCsvTable,
   withImportMapping, type CsvMapping, type CsvTable, type DateOrder, type DecimalSeparator, type MappingField, type RowError,
@@ -25,6 +25,7 @@ const DECIMAL_LABEL: Record<DecimalSeparator, string> = { '.': 'Point: 1,234.56'
 const DATE_ORDER_LABEL: Record<DateOrder, string> = {
   MDY: 'Month first: 12/31/2026', DMY: 'Day first: 31/12/2026', YMD: 'Year first: 2026-12-31',
 };
+const DATE_ORDERS: DateOrder[] = ['MDY', 'DMY', 'YMD'];
 
 interface Loaded { name: string; text: string; table: CsvTable }
 interface Summary { file: string; account: string; added: number; duplicates: number; errors: RowError[]; table: CsvTable }
@@ -158,11 +159,13 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
     setDecimalChosen(true);
   };
   const detectedOrder = useMemo(() => (file && mapping ? detectOrder(file.table, mapping) : undefined), [file, mapping]);
-  const ambiguousDates = !!check?.errors.some((e) => e.kind === 'ambiguous-date');
+  const dateCol = file && mapping ? file.table.headers.indexOf(mapping.date) : -1;
+  const ambiguousDates = check?.errors.filter((e) => e.kind === 'ambiguous-date').map((e) => (e.cells[dateCol] ?? '').trim()) ?? [];
   const savedOrder = savedDateOrder ? mapping?.dateOrder : undefined;
   const orderConflict = mapping?.dateOrder && detectedOrder && detectedOrder !== mapping.dateOrder ? detectedOrder : undefined;
-  // Ambiguous dates are always month or day first; the saved order, if one of them, is offered first.
-  const orderChoices: DateOrder[] = savedOrder === 'DMY' ? ['DMY', 'MDY'] : ['MDY', 'DMY'];
+  // The orders some ambiguous date reads in, the saved order first.
+  const orderChoices = (savedOrder ? [savedOrder, ...DATE_ORDERS.filter((o) => o !== savedOrder)] : DATE_ORDERS)
+    .filter((o) => ambiguousDates.some((raw) => normalizeDate(raw, o)));
   const setDateOrder = (dateOrder?: DateOrder) => {
     setMapping((m) => (m ? { ...m, dateOrder } : m));
     setDateOrderChosen(true);
@@ -299,7 +302,7 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
               <select value={mapping.dateOrder ?? ''}
                 onChange={(e) => setDateOrder((e.target.value || undefined) as DateOrder | undefined)}>
                 <option value="">Detect ({detectedOrder ? DATE_ORDER_LABEL[detectedOrder] : 'unclear from the rows'})</option>
-                {(['MDY', 'DMY', 'YMD'] as const).map((o) => <option key={o} value={o}>{DATE_ORDER_LABEL[o]}</option>)}
+                {DATE_ORDERS.map((o) => <option key={o} value={o}>{DATE_ORDER_LABEL[o]}</option>)}
               </select>
             </label>
             {orderConflict && (
@@ -308,7 +311,7 @@ export default function CsvImport({ ledger, disabled, onBusy, onResult, onOpen }
                 <button className="btn ghost" onClick={() => setDateOrder(orderConflict)}>Use {DATE_ORDER_LABEL[orderConflict]}</button>
               </p>
             )}
-            {ambiguousDates && orderChoices.map((o) => (
+            {orderChoices.map((o) => (
               <button key={o} className="btn ghost" onClick={() => setDateOrder(o)}>
                 Use {DATE_ORDER_LABEL[o]}{o === savedOrder && ' (saved for this account)'} for ambiguous dates
               </button>

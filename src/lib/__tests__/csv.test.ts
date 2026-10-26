@@ -160,6 +160,8 @@ describe('date orders', () => {
     ['2026/12/31', 'YMD', '2026-12-31'],
     ['2026.12.31', 'YMD', '2026-12-31'],
     ['2026-12-31', 'YMD', '2026-12-31'],
+    ['25-10-01', 'YMD', '2025-10-01'],
+    ['26/12/31', 'YMD', '2026-12-31'],
   ] as const)('reads %s as %s', (raw, order, iso) => expect(normalizeDate(raw, order)).toBe(iso));
 
   it('reads year-first and month-name dates in every order, and nothing else outside its order', () => {
@@ -177,11 +179,30 @@ describe('date orders', () => {
     expect(readDate('01/02/2026')).toBe('ambiguous');
     expect(readDate('1.2.26')).toBe('ambiguous');
     expect(readDate('05/05/2026')).toBe('2026-05-05');
-    expect(readDate('13/01/2026')).toBe('2026-01-13');
-    expect(readDate('01/13/2026')).toBe('2026-01-13');
+    expect(readDate('05/05/05')).toBe('2005-05-05');
     expect(readDate('2026-12-31')).toBe('2026-12-31');
+    expect(readDate('3 Oct 2026')).toBe('2026-10-03');
     expect(readDate('31/02/2026')).toBeNull();
     expect(readDate('01/02/2026', 'DMY')).toBe('2026-02-01');
+    // A date in only some orders waits for one: the rows may show another.
+    expect(readDate('13/01/2026')).toBe('ambiguous');
+    expect(readDate('01/13/2026')).toBe('ambiguous');
+    // Two-digit years may come first.
+    expect(readDate('25-10-01')).toBe('ambiguous');
+    expect(readDate('26/12/31')).toBe('ambiguous');
+    expect(readDate('25-10-01', 'YMD')).toBe('2025-10-01');
+  });
+
+  it('lets an order detected from the rows settle month against day first, but not a year first', () => {
+    expect(readDate('01/02/2026', 'DMY', true)).toBe('2026-02-01');
+    expect(readDate('2026-12-31', 'DMY', true)).toBe('2026-12-31');
+    expect(readDate('12-31-26', 'MDY', true)).toBe('2026-12-31');
+    for (const order of ['MDY', 'DMY'] as const) {
+      expect(readDate('25-10-01', order, true)).toBe('ambiguous');
+      expect(readDate('26/12/31', order, true)).toBe('ambiguous');
+    }
+    // Chosen, the order settles it.
+    expect(readDate('25-10-01', 'DMY')).toBe('2001-10-25');
   });
 
   it('detects the one order every telling date agrees with', () => {
@@ -197,12 +218,25 @@ describe('date orders', () => {
     expect(detectDateOrder(['13/01/2026', '01/13/2026'])).toBeUndefined();
   });
 
+  it('takes no evidence from two-digit years, which may come first', () => {
+    expect(detectDateOrder(['25-10-01', '25-10-15'])).toBeUndefined();
+    expect(detectDateOrder(['1-13-26', '13-1-26'])).toBeUndefined();
+    expect(detectDateOrder(['25-10-01', '26/12/31', '01/13/2026'])).toBe('MDY');
+  });
+
   it('detects the order in the fixed-column parser and skips ambiguous dates', () => {
     const eu = parseTransactionsCsv('date,description,amount\n31.12.2026,Tea,-3\n01.02.2026,Rent,-1');
     expect(eu.transactions.map((t) => t.date)).toEqual(['2026-12-31', '2026-02-01']);
     const unclear = parseTransactionsCsv('date,description,amount\n05/05/2026,Tea,-3\n01/02/2026,Rent,-1');
     expect(unclear.transactions.map((t) => t.date)).toEqual(['2026-05-05']);
     expect(unclear.skipped).toBe(1);
+  });
+
+  it('skips dates in the fixed-column parser that only read in an order the rows contradict, or year first', () => {
+    const conflict = parseTransactionsCsv('date,description,amount\n13/01/2026,Tea,-3\n01/13/2026,Rent,-1\n05/05/2026,Cake,-2');
+    expect(conflict.transactions.map((t) => t.date)).toEqual(['2026-05-05']);
+    const yearFirst = parseTransactionsCsv('date,description,amount\n13/01/2026,Tea,-3\n25-10-01,Rent,-1\n26/12/31,Cake,-2');
+    expect(yearFirst.transactions.map((t) => t.date)).toEqual(['2026-01-13']);
   });
 });
 

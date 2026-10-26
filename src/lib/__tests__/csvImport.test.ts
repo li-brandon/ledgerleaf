@@ -5,7 +5,7 @@ import {
 } from '../csvMapping';
 import { emptyLedger } from '../migrate';
 import { CsvImportProvider, applySync, fetchSync, type CsvImportOptions } from '../sync';
-import type { Account, LedgerState } from '../types';
+import type { Account, DateOrder, LedgerState } from '../types';
 import amex from './fixtures/amex.csv?raw';
 import chase from './fixtures/chase.csv?raw';
 import generic from './fixtures/generic.csv?raw';
@@ -103,7 +103,8 @@ describe('applyMapping', () => {
 
   it('flips Amex amounts so charges are spending and refunds are income', () => {
     const table = readCsvTable(amex);
-    const { transactions, errors } = applyMapping(table, detectMapping(table.headers), 'acct');
+    // Two-digit years ("10/9/26") don't show the date order, so Amex files need one chosen.
+    const { transactions, errors } = applyMapping(table, { ...detectMapping(table.headers), dateOrder: 'MDY' }, 'acct');
     expect(transactions.map((t) => [t.date, t.description, t.amount])).toEqual([
       ['2026-10-16', 'NORI HOUSE', -48.6],
       ['2026-10-15', 'CINEMA LUX', -24],
@@ -261,6 +262,40 @@ describe('applyMapping', () => {
     const other = readCsvTable('Date,Description,Amount\n01/02/2026,Pay,1\n04/13/2026,Rent,-2');
     expect(applyMapping(other, mapping, 'acct', { savedDateOrder: true }).errors.map((e) => e.kind ?? e.reason))
       .toEqual(['ambiguous-date', 'Unreadable date "04/13/2026"']);
+    // An unconfirmed saved order still reads dates that are a real date in only one order.
+    const us = readCsvTable('Date,Description,Amount\n10/13/26,Tea,-3\n10/9/26,Cake,-4');
+    const usSaved = applyMapping(us, { ...mapping, dateOrder: 'MDY' }, 'acct', { savedDateOrder: true });
+    expect(usSaved.transactions.map((t) => t.date)).toEqual(['2026-10-13']);
+    expect(usSaved.errors.map((e) => [e.row, e.kind])).toEqual([[3, 'ambiguous-date']]);
+  });
+
+  it('holds back dates that only read in an order the other rows contradict, until one is chosen', () => {
+    const table = readCsvTable('Date,Description,Amount\n13/01/2026,Tea,-3\n01/13/2026,Rent,-1\n05/05/2026,Cake,-2\n2026-05-06,Pie,-4\n3 Oct 2026,Jam,-5');
+    const m = detectMapping(table.headers);
+    expect(detectOrder(table, m)).toBeUndefined();
+    const { transactions, errors } = applyMapping(table, m, 'acct');
+    expect(transactions.map((t) => t.date)).toEqual(['2026-05-05', '2026-05-06', '2026-10-03']);
+    expect(errors.map((e) => [e.row, e.kind, e.reason])).toEqual([
+      [2, 'ambiguous-date', 'Ambiguous date "13/01/2026": choose the date order'],
+      [3, 'ambiguous-date', 'Ambiguous date "01/13/2026": choose the date order'],
+    ]);
+    const dmy = applyMapping(table, { ...m, dateOrder: 'DMY' }, 'acct');
+    expect(dmy.transactions.map((t) => t.date)).toEqual(['2026-01-13', '2026-05-05', '2026-05-06', '2026-10-03']);
+    expect(dmy.errors.map((e) => e.reason)).toEqual(['Unreadable date "01/13/2026"']);
+  });
+
+  it('never reads two-digit-year dates that are also dates year first without a chosen order', () => {
+    const rows = 'Date,Description,Amount\n25-10-01,Rent,-1000\n26/12/31,Tea,-3\n05/05/05,Cake,-4';
+    for (const telling of ['', '\n13/01/2026,Pay,1', '\n01/13/2026,Pay,1']) {
+      const table = readCsvTable(rows + telling);
+      const m = detectMapping(table.headers);
+      const { transactions, errors } = applyMapping(table, m, 'acct');
+      expect(errors.map((e) => [e.row, e.kind])).toEqual([[2, 'ambiguous-date'], [3, 'ambiguous-date']]);
+      expect(transactions.map((t) => t.date)).toEqual(['2005-05-05', ...(telling ? ['2026-01-13'] : [])]);
+    }
+    const table = readCsvTable(rows);
+    const ymd = applyMapping(table, { ...detectMapping(table.headers), dateOrder: 'YMD' }, 'acct');
+    expect(ymd.transactions.map((t) => t.date)).toEqual(['2025-10-01', '2026-12-31', '2005-05-05']);
   });
 
   it('refuses a mapping that does not fit the file', () => {
@@ -271,7 +306,7 @@ describe('applyMapping', () => {
 describe('errorRowsCsv', () => {
   it('round-trips the failed rows with their reasons', () => {
     const table = readCsvTable(amex);
-    const { errors } = applyMapping(table, detectMapping(table.headers), 'acct');
+    const { errors } = applyMapping(table, { ...detectMapping(table.headers), dateOrder: 'MDY' }, 'acct');
     const rows = parseCsvRows(errorRowsCsv(table, errors));
     expect(rows[0]).toEqual([...table.headers, 'Error']);
     expect(rows).toHaveLength(2);
@@ -294,18 +329,19 @@ describe('errorRowsCsv', () => {
 });
 
 describe('importing through the sync pipeline', () => {
-  // The generic fixture's two "10/6/26"-style dates are ambiguous without a date order.
-  it.each([['Chase', chase, 11, 2], ['Amex', amex, 5, 1], ['generic', generic, 5, 5]])(
+  // The generic fixture's two "10/6/26"-style dates are ambiguous without a date order; the Amex one's are all two-digit-year dates.
+  it.each([['Chase', chase, 11, 2], ['Amex', amex, 5, 1, 'MDY'], ['generic', generic, 5, 5]] as const)(
     'imports the %s fixture into a new account, and adds 0 when re-imported',
-    async (_, text, rows, bad) => {
-      const first = await importCsv(emptyLedger('2026-10'), text);
+    async (_, text, rows, bad, dateOrder?: DateOrder) => {
+      const mapping = { ...detectMapping(readCsvTable(text).headers), dateOrder };
+      const first = await importCsv(emptyLedger('2026-10'), text, { mapping });
       expect(first).toMatchObject({ added: rows, duplicates: 0 });
       expect(first.provider.skipped).toBe(bad);
       expect(first.state.accounts).toEqual([expect.objectContaining({ ...card, currency: 'USD' })]);
       expect(first.state.transactions.every((t) => t.source === 'csv' && t.accountId === card.id)).toBe(true);
       expect(first.state.syncs?.csv).toEqual({ lastSync: now.toISOString() });
 
-      const again = await importCsv(first.state, text);
+      const again = await importCsv(first.state, text, { mapping });
       expect(again).toMatchObject({ added: 0, updated: 0, duplicates: rows });
       expect(again.state.transactions).toHaveLength(rows);
     },

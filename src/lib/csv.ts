@@ -40,13 +40,12 @@ const month = (name: string) => MONTHS.findIndex((m) => m.startsWith(name.toLowe
 /** Two-digit years are read as 2000–2069 or 1970–1999. */
 const fullYear = (y: string) => (y.length === 2 ? (+y < 70 ? 2000 + +y : 1900 + +y) : +y);
 
-const DATE_ORDERS: DateOrder[] = ['MDY', 'DMY', 'YMD'];
-
 /**
  * `raw` as YYYY-MM-DD under each date order it can be written in, null where that reading is not
- * a real date. A numeric date with the year last (12/31/2026, 31.12.2026, 1-5-26) is month or day
- * first, never year first. One with a four-digit year first (2026-12-31, also with a time) or a
- * month name (DD MMM YYYY, "DD-MMM-YY", MMM DD, YYYY) reads the same under every order.
+ * a real date. A numeric date with a four-digit year last (12/31/2026, 31.12.2026) is month or day
+ * first, never year first. One of three two-digit numbers (12-31-26, 25-10-01) may also be year
+ * first. One with a four-digit year first (2026-12-31, also with a time) or a month name
+ * (DD MMM YYYY, "DD-MMM-YY", MMM DD, YYYY) reads the same under every order.
  * Numbers may be separated by "/", "." or "-".
  */
 function dateReadings(raw: string): Partial<Record<DateOrder, string | null>> {
@@ -54,7 +53,10 @@ function dateReadings(raw: string): Partial<Record<DateOrder, string | null>> {
   let m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[T ].*)?$/.exec(s);
   if (m) return every(fmt(+m[1], +m[2], +m[3]));
   m = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4}|\d{2})$/.exec(s);
-  if (m) return { MDY: fmt(fullYear(m[3]), +m[1], +m[2]), DMY: fmt(fullYear(m[3]), +m[2], +m[1]) };
+  if (m) {
+    const r = { MDY: fmt(fullYear(m[3]), +m[1], +m[2]), DMY: fmt(fullYear(m[3]), +m[2], +m[1]) };
+    return m[1].length === 2 && m[3].length === 2 ? { ...r, YMD: fmt(fullYear(m[1]), +m[2], +m[3]) } : r;
+  }
   let named: string | null = null;
   m = /^(\d{1,2})[ -]([a-z]{3,9})\.?[ ,-]+(\d{4}|\d{2})$/i.exec(s);
   if (m) named = fmt(fullYear(m[3]), month(m[2]), +m[1]);
@@ -67,37 +69,41 @@ const every = (date: string | null) => ({ MDY: date, DMY: date, YMD: date });
 
 /**
  * Reads a date written in `order` (see {@link dateReadings} for the formats). Dates with a
- * four-digit year first or a month name are read whatever the order; under YMD, year-last dates
- * are not. Returns YYYY-MM-DD or null.
+ * four-digit year first or a month name are read whatever the order; under YMD, dates with a
+ * four-digit year last are not. Returns YYYY-MM-DD or null.
  */
 export function normalizeDate(raw: string, order: DateOrder = 'MDY'): string | null {
   return dateReadings(raw)[order] ?? null;
 }
 
 /**
- * Read a date whose order may be unknown. Without `order`, a date is read if it means the same
- * under every order it is valid in ("05/05/2026", "13/01/2026", "2026-12-31"); "01/02/2026"
- * could be 2 January or 1 February, so it is 'ambiguous'. Null if not a date.
+ * Read a date whose order may be unknown. Without `order`, a date is read only if it is the same
+ * date under every order it can be written in ("05/05/2026", "05/05/05", "2026-12-31");
+ * "01/02/2026" could be 2 January or 1 February, and "13/01/2026" is only a date day first, so
+ * both are 'ambiguous'. An order only `detected` from the rows (see {@link detectDateOrder})
+ * settles month against day first, not whether a two-digit year comes first: a date that is also
+ * a different date year first ("25-10-01") stays 'ambiguous'. Null if not a date.
  */
-export function readDate(raw: string, order?: DateOrder): string | null | 'ambiguous' {
-  if (order) return normalizeDate(raw, order);
-  const dates = new Set(Object.values(dateReadings(raw)).filter((d) => d));
+export function readDate(raw: string, order?: DateOrder, detected = false): string | null | 'ambiguous' {
+  const r = dateReadings(raw);
+  if (order) return detected && r.YMD && r.YMD !== r[order] ? 'ambiguous' : r[order] ?? null;
+  const dates = new Set(Object.values(r));
   return dates.size > 1 ? 'ambiguous' : [...dates][0] ?? null;
 }
 
+/** Whether `raw` is a different real date in two orders ("01/02/2026", "25-10-01"), so only an order can settle it. */
+export const ambiguousDate = (raw: string) => new Set(Object.values(dateReadings(raw)).filter((d) => d)).size > 1;
+
 /**
- * The date order `values` are written in: the one order every value that is a date in only some
- * orders agrees with ("13/01/2026" is day first, "01/13/2026" month first). ISO and month-name dates
- * read the same in every order, so they tell nothing. Undefined when no value tells, or values disagree.
+ * The date order `values` are written in: the one order every value that is a date in only one of
+ * month and day first agrees with ("13/01/2026" is day first, "01/13/2026" month first). Only dates
+ * with a four-digit year last tell: ISO and month-name dates read the same in every order, and a
+ * two-digit year may come first ("25-10-01"). Undefined when no value tells, or values disagree.
  */
 export function detectDateOrder(values: string[]): DateOrder | undefined {
-  let left = DATE_ORDERS;
-  for (const v of values) {
-    const r = dateReadings(v);
-    const valid = DATE_ORDERS.filter((o) => r[o]);
-    if (valid.length && valid.length < DATE_ORDERS.length) left = left.filter((o) => valid.includes(o));
-  }
-  return left.length === 1 ? left[0] : undefined;
+  const telling = values.filter((v) => !/\D\d\d$/.test(v.trim())).map(dateReadings).filter((r) => !r.MDY !== !r.DMY);
+  const orders = new Set(telling.map((r): DateOrder => (r.MDY ? 'MDY' : 'DMY')));
+  return orders.size === 1 ? [...orders][0] : undefined;
 }
 
 function fmt(y: number, mo: number, d: number): string | null {
@@ -219,7 +225,7 @@ export function parseTransactionsCsv(text: string): CsvParseResult {
   let skipped = 0;
   for (const r of rows) {
     const get = (c: (typeof COLUMNS)[number]) => (idx[c] >= 0 ? (r[idx[c]] ?? '').trim() : '');
-    const date = readDate(get('date'), order);
+    const date = readDate(get('date'), order, true);
     const amount = readAmount(get('amount'), decimal);
     const description = get('description');
     if (!date || date === 'ambiguous' || typeof amount !== 'number' || !description) { skipped++; continue; }

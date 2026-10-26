@@ -249,6 +249,29 @@ describe('CSV import flow', () => {
     expect(state.importMappings?.['csv-eu']).toMatchObject({ dateOrder: 'DMY' });
   });
 
+  it('offers year first for two-digit years that may come first, and reads them with one click', async () => {
+    const user = userEvent.setup();
+    await renderApp(undefined, '#/connections');
+    const ui = within(card());
+    // Two-digit years don't show the order, and "25-10-01" is a date day first and year first.
+    await user.upload(fileInput(), csvFile('Date,Description,Amount\n25-10-01,Rent,-1000\n26/12/31,Tea,-3\n2026-10-02,Pay,1', 'yy.csv'));
+    await ui.findByText('yy.csv');
+    expect(ui.getByText((_, el) => el?.tagName === 'P' && /^1 rows ready to import/.test(el.textContent ?? '')))
+      .toHaveTextContent('1 rows ready to import, 2 with errors (first: row 2, Ambiguous date "25-10-01": choose the date order).');
+    // Neither date is a date month first, so only day and year first are offered.
+    expect(ui.getAllByRole('button', { name: /for ambiguous dates/ }).map((b) => b.textContent)).toEqual([
+      'Use Day first: 31/12/2026 for ambiguous dates', 'Use Year first: 2026-12-31 for ambiguous dates',
+    ]);
+
+    await user.click(ui.getByRole('button', { name: 'Use Year first: 2026-12-31 for ambiguous dates' }));
+    expect(ui.getByLabelText('Date order')).toHaveValue('YMD');
+    await user.click(ui.getByRole('button', { name: 'Import 3 rows' }));
+    await ui.findByRole('status');
+    const state = await stored();
+    expect(state.transactions.map((t) => t.date).sort()).toEqual(['2025-10-01', '2026-10-02', '2026-12-31']);
+    expect(state.importMappings?.['csv-yy']).toMatchObject({ dateOrder: 'YMD' });
+  });
+
   it('does not let a saved date order settle ambiguous dates until it is confirmed, and warns when the rows disagree', async () => {
     const user = userEvent.setup();
     await renderApp({

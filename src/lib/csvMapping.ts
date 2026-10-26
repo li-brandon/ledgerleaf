@@ -1,4 +1,4 @@
-import { contentIds, detectDateOrder, detectDecimal, parseCsvRows, readAmount, readDate, toCsv } from './csv';
+import { ambiguousDate, contentIds, detectDateOrder, detectDecimal, parseCsvRows, readAmount, readDate, toCsv } from './csv';
 import type { CsvMapping, DateOrder, DecimalSeparator, LedgerState, Transaction } from './types';
 
 export type { CsvMapping, DateOrder, DecimalSeparator };
@@ -167,7 +167,10 @@ export function detectOrder(table: CsvTable, mapping: CsvMapping): DateOrder | u
   return detectDateOrder(i < 0 ? [] : table.rows.map((r) => r[i] ?? ''));
 }
 
-/** The order dates are read in: the mapping's, else the file's, else none, so ambiguous dates fail. */
+/**
+ * The order dates are read in: the mapping's, else the file's, else none, so ambiguous dates fail.
+ * The file's order only settles month against day first (see {@link readDate}).
+ */
 export function dateOrderFor(table: CsvTable, mapping: CsvMapping): DateOrder | undefined {
   return mapping.dateOrder ?? detectOrder(table, mapping);
 }
@@ -232,7 +235,7 @@ export function applyMapping(table: CsvTable, mapping: CsvMapping, accountId: st
     const fail = (reason: string, kind?: RowErrorKind) => errors.push({ row: i + offset, cells, reason, ...(kind && { kind }) });
     const rawDate = get(mapping.date);
     if (!rawDate) return fail('Missing date');
-    const date = !datesSettled && readDate(rawDate) === 'ambiguous' ? 'ambiguous' : readDate(rawDate, order);
+    const date = !datesSettled && ambiguousDate(rawDate) ? 'ambiguous' : readDate(rawDate, order, !mapping.dateOrder);
     if (date === 'ambiguous') return fail(`Ambiguous date "${rawDate}": choose the date order`, 'ambiguous-date');
     if (!date) return fail(`Unreadable date "${rawDate}"`);
     const description = get(mapping.description).replace(/\s+/g, ' ');
