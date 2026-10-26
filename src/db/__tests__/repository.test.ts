@@ -86,13 +86,16 @@ describe.each(ADAPTERS)('%s repository', (_, open) => {
     });
   });
 
-  it('reads and replaces meta', async () => {
+  it('writes meta key by key, deleting keys set to undefined', async () => {
     const repo = await open();
     expect(await repo.meta.get()).toEqual({});
-    await repo.meta.set({ version: 2, lastSync: '2026-10-20T00:00:00.000Z' });
-    expect(await repo.meta.get()).toEqual({ version: 2, lastSync: '2026-10-20T00:00:00.000Z' });
-    await repo.meta.set({ version: 2 });
-    expect(await repo.meta.get()).toEqual({ version: 2 });
+    await repo.apply({ meta: { version: 2, lastSync: '2026-10-20T00:00:00.000Z' } });
+    await repo.apply({ meta: { settings: { currency: 'EUR', monthStartDay: 1, theme: 'dark' } } });
+    expect(await repo.meta.get()).toEqual({
+      version: 2, lastSync: '2026-10-20T00:00:00.000Z', settings: { currency: 'EUR', monthStartDay: 1, theme: 'dark' },
+    });
+    await repo.apply({ meta: { lastSync: undefined } });
+    expect(await repo.meta.get()).toEqual({ version: 2, settings: { currency: 'EUR', monthStartDay: 1, theme: 'dark' } });
   });
 
   it('queries transactions by date range and account', async () => {

@@ -20,10 +20,23 @@ interface LedgerDB extends DBSchema {
 
 const STORES = [...MODEL_NAMES, 'meta'] as const;
 
+export interface OpenOptions {
+  /** Tests open at a newer version to exercise upgrades. */
+  version?: number;
+  /** An older tab holds the database open, so this tab's upgrade waits until it closes. */
+  onBlocked?(): void;
+  /**
+   * Another tab wants to upgrade the database. This connection closes once the returned
+   * promise settles (e.g. after a last save); writes after that reject.
+   */
+  onBlocking?(): unknown;
+}
+
 /** Open (creating or upgrading if needed) the ledger database and wrap it as a Repository. */
-export async function openIdbRepository(name = DB_NAME): Promise<Repository> {
-  const db = await openDB<LedgerDB>(name, DB_VERSION, {
-    upgrade(db) {
+export async function openIdbRepository(name = DB_NAME, options: OpenOptions = {}): Promise<Repository> {
+  const db = await openDB<LedgerDB>(name, options.version ?? DB_VERSION, {
+    upgrade(db, oldVersion) {
+      if (oldVersion >= 1) return;
       db.createObjectStore('accounts', { keyPath: 'id' });
       const tx = db.createObjectStore('transactions', { keyPath: 'id' });
       tx.createIndex('date', 'date');
@@ -34,6 +47,8 @@ export async function openIdbRepository(name = DB_NAME): Promise<Repository> {
       db.createObjectStore('balanceSnapshots', { keyPath: ['accountId', 'date'] });
       db.createObjectStore('meta');
     },
+    blocked: () => options.onBlocked?.(),
+    blocking: () => void Promise.resolve().then(() => options.onBlocking?.()).finally(() => db.close()),
   });
   return idbRepository(db);
 }
@@ -76,10 +91,6 @@ function idbRepository(db: IDBPDatabase<LedgerDB>): Repository {
     balanceSnapshots: store('balanceSnapshots'),
     meta: {
       get: () => readMeta(),
-      async set(meta) {
-        const tx = db.transaction('meta', 'readwrite');
-        await commit(tx, (ops) => ops.push(tx.store.clear(), ...writeMeta(tx.store, meta)));
-      },
     },
 
     async readAll() {
@@ -107,10 +118,8 @@ function idbRepository(db: IDBPDatabase<LedgerDB>): Repository {
           for (const k of changes.delete?.[n] ?? []) ops.push(os.delete(k));
           for (const v of changes.put?.[n] ?? []) ops.push(os.put(v));
         }
-        if (changes.meta) {
-          const os = tx.objectStore('meta');
-          ops.push(os.clear(), ...writeMeta(os, changes.meta));
-        }
+        const os = tx.objectStore('meta');
+        for (const [k, v] of Object.entries(changes.meta ?? {})) ops.push(v === undefined ? os.delete(k) : os.put(v, k));
       });
       return true;
     },
@@ -135,8 +144,4 @@ async function commit(tx: { abort(): void; done: Promise<void> }, queue: (ops: P
     throw e;
   }
   await Promise.all([...ops, tx.done]);
-}
-
-function writeMeta(os: { put(value: never, key: never): Promise<unknown> }, meta: Meta) {
-  return Object.entries(meta).filter(([, v]) => v !== undefined).map(([k, v]) => os.put(v as never, k as never));
 }

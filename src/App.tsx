@@ -106,6 +106,13 @@ export default function App() {
       </aside>
       <main id="main" ref={mainRef} tabIndex={-1}>
         {ledger.error && <p className="notice" role="alert">{ledger.error}</p>}
+        {ledger.blocked && <p className="notice" role="status">Close other Ledgerleaf tabs to finish updating.</p>}
+        {ledger.stale && (
+          <div className="notice error save-failed" role="alert">
+            <p>Ledgerleaf was updated in another tab. Reload this tab to keep going.</p>
+            <button className="btn ghost" onClick={() => location.reload()}>Reload</button>
+          </div>
+        )}
         {ledger.saveError && (
           <div className="notice error save-failed" role="alert">
             <p>

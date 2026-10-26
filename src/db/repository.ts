@@ -57,8 +57,11 @@ export interface LedgerChanges {
   clear?: boolean;
   put?: Partial<LedgerRecords>;
   delete?: { [K in ModelName]?: Models[K]['key'][] };
-  /** Replaces the whole meta record when present. */
-  meta?: Meta;
+  /**
+   * Meta keys to write, each on its own so tabs writing different keys never overwrite each
+   * other; a key present with an undefined value is deleted. Keys not mentioned are left alone.
+   */
+  meta?: Partial<Meta>;
 }
 
 export interface EntityStore<T, K> {
@@ -79,7 +82,6 @@ export interface TransactionStore extends EntityStore<Transaction, string> {
 
 export interface MetaStore {
   get(): Promise<Meta>;
-  set(meta: Meta): Promise<void>;
 }
 
 /** Storage-agnostic access to the ledger. Implementations never touch the network. */
