@@ -135,6 +135,22 @@ describe('restoreBackup', () => {
     expect(twice.state.transactions).toEqual(once.transactions);
   });
 
+  it('keeps import batches and batch ids, merging batch lists by id', () => {
+    const batch = (id: string, at: string) => ({ id, file: `${id}.csv`, accountId: 'acc-1', rows: 1, added: 1, at });
+    const withBatches: LedgerState = {
+      ...sample(),
+      transactions: sample().transactions.map((t, i) => (i === 0 ? { ...t, importBatchId: 'imp-b' } : t)),
+      importBatches: [batch('imp-b', '2026-10-19T00:00:00.000Z'), batch('imp-a', '2026-10-01T00:00:00.000Z')],
+    };
+    const { backup: b } = roundTrip(withBatches) as { backup: Backup };
+    expect(restoreBackup(emptyLedger(MONTH), b, 'replace').state).toEqual(migrate(withBatches));
+
+    const current = { ...emptyLedger(MONTH), importBatches: [batch('imp-c', '2026-10-10T00:00:00.000Z'), batch('imp-a', '2026-10-01T00:00:00.000Z')] };
+    const merged = restoreBackup(current, b, 'merge').state;
+    expect(merged.importBatches?.map((x) => x.id)).toEqual(['imp-b', 'imp-c', 'imp-a']);
+    expect(merged.transactions.find((t) => t.id === 'tx-0')?.importBatchId).toBe('imp-b');
+  });
+
   it('merge takes the backup settings when the ledger has none', () => {
     expect(restoreBackup(emptyLedger(MONTH), backup(), 'merge').state.settings).toEqual(sample().settings);
   });

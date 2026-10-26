@@ -9,6 +9,7 @@ import { currentMonth, setMonthBudget } from './lib/budget';
 import {
   addCategory as addCat, deleteCategory as deleteCat, ensureCategory, updateCategory as updateCat, type CategoryDraft,
 } from './lib/categories';
+import { undoImport as undoImportIn } from './lib/importBatches';
 import { emptyLedger } from './lib/migrate';
 import {
   addManualRecurring, removeManualRecurring, setRecurringDecision, type ManualDraft,
@@ -146,15 +147,18 @@ export function useLedger(open: (options: OpenOptions) => Promise<Repository> = 
    * Sync one provider, all or nothing: everything is fetched and validated, merged, and
    * written to storage before the ledger updates. Any failure throws a {@link SyncError}
    * and leaves both the stored and in-memory ledger untouched. `also` makes further changes
-   * to the synced ledger that are saved in the same write, e.g. remembering a CSV mapping.
+   * to the synced ledger that are saved in the same write, e.g. remembering a CSV mapping; it
+   * also gets the ledger the sync was merged into.
    */
-  const runSync = useCallback(async (provider: SyncProvider, also: (s: LedgerState) => LedgerState = (s) => s) => {
+  const runSync = useCallback(async (
+    provider: SyncProvider, also: (s: LedgerState, before: LedgerState) => LedgerState = (s) => s,
+  ) => {
     const incoming = await fetchSync(provider, latest.current);
     const now = new Date();
     const prev = latest.current;
-    const sync = (s: LedgerState) => also(applySync(s, provider.id, incoming, now).state);
+    const sync = (s: LedgerState) => also(applySync(s, provider.id, incoming, now).state, s);
     const outcome = applySync(prev, provider.id, incoming, now);
-    const next = also(outcome.state);
+    const next = also(outcome.state, prev);
     try {
       await persister.current?.commit(next);
     } catch (e) {
@@ -187,6 +191,28 @@ export function useLedger(open: (options: OpenOptions) => Promise<Repository> = 
       throw new Error('Demo data could not be removed; nothing was changed.', { cause: e });
     }
     const merge = (s: LedgerState) => (s === prev ? next : withoutDemo(s));
+    latest.current = merge(latest.current);
+    setState(merge);
+    return removed;
+  }, []);
+
+  /**
+   * Undo a CSV import: remove its transactions and what it created (see `lib/importBatches`).
+   * Written to storage before the ledger updates; throws and changes nothing if the write
+   * fails. Resolves to how many transactions were removed.
+   */
+  const undoImport = useCallback(async (batchId: string) => {
+    const prev = latest.current;
+    const next = undoImportIn(prev, batchId);
+    const removed = prev.transactions.length - next.transactions.length;
+    if (next === prev) return removed;
+    try {
+      await persister.current?.commit(next);
+    } catch (e) {
+      persister.current?.schedule(latest.current);
+      throw new Error('The import could not be undone; nothing was changed.', { cause: e });
+    }
+    const merge = (s: LedgerState) => (s === prev ? next : undoImportIn(s, batchId));
     latest.current = merge(latest.current);
     setState(merge);
     return removed;
@@ -315,7 +341,7 @@ export function useLedger(open: (options: OpenOptions) => Promise<Repository> = 
   const reset = useCallback(() => replaceAll(emptyLedger(), 'Local data could not be erased; nothing was changed.'), [replaceAll]);
 
   return {
-    state, loading, error, saveError, blocked, stale, retrySave, runSync, clearDemo, setCategory, setAlways, setReviewed, editTransaction: editTx, setBudget, setRollover, renameAccount: renameAcct,
+    state, loading, error, saveError, blocked, stale, retrySave, runSync, clearDemo, undoImport, setCategory, setAlways, setReviewed, editTransaction: editTx, setBudget, setRollover, renameAccount: renameAcct,
     setAccountHidden: setHidden, addCategory, updateCategory, deleteCategory, saveRule, deleteRule, moveRule, applyRules,
     setRecurring, addRecurring, removeRecurring, setSettings, importBackup, reset,
   };

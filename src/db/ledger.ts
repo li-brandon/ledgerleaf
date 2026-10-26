@@ -20,6 +20,7 @@ export async function readLedger(repo: Repository): Promise<LedgerState | undefi
   return migrate({
     ...inLedgerOrder(records, meta.order), version: meta.version, lastSync: meta.lastSync, syncs: meta.syncs,
     importMappings: meta.importMappings, recurring: meta.recurring, settings: meta.settings,
+    importBatches: meta.importBatches,
   });
 }
 
@@ -36,7 +37,7 @@ function inLedgerOrder(records: LedgerRecords, order: Meta['order'] = {}): Ledge
 }
 
 /** Meta keys held in the ledger state; compared by reference, as state updates are immutable. */
-const STATE_META = ['lastSync', 'syncs', 'importMappings', 'recurring', 'settings'] as const;
+const STATE_META = ['lastSync', 'syncs', 'importMappings', 'recurring', 'settings', 'importBatches'] as const;
 
 /**
  * The writes that turn `prev` into `next`. Without `prev` everything is replaced. With it,

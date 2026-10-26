@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emptyLedger } from '../../lib/migrate';
 import { DEFAULT_SETTINGS } from '../../lib/settings';
-import { renderApp, stored } from '../../test/app';
+import { csvLedger, renderApp, stored } from '../../test/app';
 
 // "10/13/2026" shows the dates are month first.
 const BANK_CSV = [
@@ -509,5 +509,58 @@ describe('CSV import flow', () => {
       await user.selectOptions(ui.getByLabelText('Delimiter'), 'Semicolon');
       expect(previewRow('Tea').getByText('-$3.00')).toBeInTheDocument();
     });
+  });
+});
+
+describe('undo import', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 9, 20, 12));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  /** Groceries spent this month on Budgets. */
+  async function groceriesSpent(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole('link', { name: 'Budgets' }));
+    const budget = screen.getByText('Groceries', { selector: '.budget-name' }).closest<HTMLElement>('.budget')!;
+    const spent = within(budget).getByText('Spent', { selector: 'dt' }).nextElementSibling!.textContent;
+    await user.click(screen.getByRole('link', { name: 'Connections' }));
+    return spent;
+  }
+
+  it('lists the import and undoes it after confirming, leaving other data and derived figures as before', async () => {
+    const user = userEvent.setup();
+    const seeded = await csvLedger('date,description,amount,category\n2026-10-05,Corner Grocer,-130,Groceries');
+    await renderApp(seeded, '#/connections');
+    const before = await stored();
+    expect(await groceriesSpent(user)).toBe('$130.00');
+
+    await user.upload(fileInput(), csvFile(BANK_CSV, 'bank.csv'));
+    await user.click(await within(card()).findByRole('button', { name: 'Import 3 rows' }));
+    await within(card()).findByRole('status');
+    expect(await groceriesSpent(user)).toBe('$172.10');
+
+    const ui = within(card());
+    const row = ui.getByText('bank.csv', { selector: 'li > span' }).closest('li')!;
+    expect(row).toHaveTextContent('bank · 3 rows, 3 added');
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await user.click(ui.getByRole('button', { name: 'Undo import of bank.csv' }));
+    expect(confirm).toHaveBeenCalledWith('Undo the import of bank.csv? This removes 3 transactions.');
+    expect((await stored()).transactions).toHaveLength(4);
+    expect(ui.getByRole('button', { name: 'Undo import of bank.csv' })).toBeInTheDocument();
+
+    confirm.mockReturnValue(true);
+    await user.click(ui.getByRole('button', { name: 'Undo import of bank.csv' }));
+    expect(await ui.findByRole('status')).toHaveTextContent('Undid the import of bank.csv: removed 3 transactions.');
+    expect(ui.queryByRole('button', { name: /Undo import/ })).toBeNull();
+    await waitFor(async () => {
+      const after = await stored();
+      expect(after.transactions).toEqual(before.transactions);
+      expect(after.accounts).toEqual(before.accounts);
+      expect(after.balanceSnapshots).toEqual(before.balanceSnapshots);
+      expect(after.categories).toEqual(before.categories);
+      expect(after.importBatches).toBeUndefined();
+    });
+    expect(await groceriesSpent(user)).toBe('$130.00');
   });
 });

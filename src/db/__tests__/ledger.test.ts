@@ -80,6 +80,29 @@ describe.each(ADAPTERS)('ledger on %s', (_, open) => {
     expect(await readLedger(repo)).toEqual(migrate(s));
   });
 
+  it('persists import batches and the batch id of each transaction, and their removal', async () => {
+    const repo = await open();
+    const prev = sample();
+    await saveLedger(repo, prev);
+    const batch = {
+      id: 'imp-1', file: 'bank.csv', accountId: 'acc-1', rows: 3, added: 2, at: '2026-10-20T08:00:00.000Z',
+      snapshots: [{ accountId: 'acc-1', date: '2026-10-20', balance: 5, before: { accountId: 'acc-1', date: '2026-10-20', balance: 4 } }],
+    };
+    const next: LedgerState = {
+      ...prev,
+      transactions: prev.transactions.map((t, i) => (i < 2 ? { ...t, importBatchId: 'imp-1' } : t)),
+      importBatches: [batch],
+    };
+    await saveLedger(repo, next, prev);
+    const loaded = (await readLedger(repo))!;
+    expect(loaded.importBatches).toEqual([batch]);
+    expect(loaded.transactions.filter((t) => t.importBatchId === 'imp-1').map((t) => t.id)).toEqual([next.transactions[0].id, next.transactions[1].id]);
+
+    await saveLedger(repo, { ...next, importBatches: undefined }, next);
+    expect((await readLedger(repo))!.importBatches).toBeUndefined();
+    expect(await repo.meta.get()).not.toHaveProperty('importBatches');
+  });
+
   it('applies incremental saves', async () => {
     const repo = await open();
     const prev = sample();

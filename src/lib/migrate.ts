@@ -4,8 +4,8 @@ import { normalizeRecurring } from './recurring';
 import { normalizeRule } from './rules';
 import { normalizeSettings } from './settings';
 import {
-  NON_SPEND, SCHEMA_VERSION, type Account, type Budget, type Budgets, type Category, type CsvMapping, type LedgerState,
-  type Transaction,
+  NON_SPEND, SCHEMA_VERSION, type Account, type Budget, type Budgets, type Category, type CsvMapping, type ImportBatch,
+  type LedgerState, type Transaction,
 } from './types';
 
 export const V1_KEY = 'ledgerleaf:v1';
@@ -43,6 +43,13 @@ function normalizeMapping(v: unknown): CsvMapping | undefined {
   if (v.dateOrder === 'MDY' || v.dateOrder === 'DMY' || v.dateOrder === 'YMD') out.dateOrder = v.dateOrder;
   if (v.delimiter === ',' || v.delimiter === ';' || v.delimiter === '\t') out.delimiter = v.delimiter;
   return out;
+}
+
+/** Stored import batches that have what undoing them needs; others are dropped. */
+function normalizeBatches(v: unknown): ImportBatch[] {
+  return list<unknown>(v).filter((b): b is ImportBatch =>
+    isObject(b) && typeof b.id === 'string' && !!b.id && typeof b.accountId === 'string'
+    && typeof b.file === 'string' && typeof b.at === 'string');
 }
 
 /**
@@ -91,6 +98,7 @@ function normalizeTransaction(t: Transaction, categories: Category[]): Transacti
   if (out.categoryEdited !== true) delete out.categoryEdited;
   if (out.merchantEdited !== true) delete out.merchantEdited;
   if (typeof out.pending !== 'boolean') delete out.pending;
+  if (typeof out.importBatchId !== 'string') delete out.importBatchId;
   const source = t.source ?? sourceFromId(t.id);
   if (source) out.source = source;
   return out;
@@ -129,6 +137,8 @@ export function normalizeLedger(s: Partial<LedgerState>): LedgerState {
   const recurring = normalizeRecurring(s.recurring);
   if (recurring) out.recurring = recurring;
   if (isObject(s.settings)) out.settings = normalizeSettings(s.settings);
+  const batches = normalizeBatches(s.importBatches);
+  if (batches.length) out.importBatches = batches;
   return out;
 }
 
