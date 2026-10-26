@@ -16,10 +16,19 @@ export default defineConfig(({ mode }) => {
       css: { include: [/styles\.css/] },
       coverage: {
         provider: 'v8',
-        include: ['src/lib/**'],
-        exclude: ['src/lib/**/__tests__/**'],
+        // Every source file counts, tested or not; only tests, test helpers, type-only files and the entry point are left out.
+        include: ['src/**/*.{ts,tsx}'],
+        exclude: [
+          '**/__tests__/**', '**/*.test.{ts,tsx}', 'src/test/**', '**/*.d.ts',
+          // Interfaces only: no runtime code to cover.
+          'src/lib/sync/types.ts',
+          // Bootstrap: mounts <App /> into index.html; App itself is covered.
+          'src/main.tsx',
+        ],
         reporter: ['text-summary', 'text'],
-        thresholds: { lines: 80 },
+        // Baseline for this scope (LIB-387), floored (lines to 90.9: 91 would leave no slack): raise these as coverage improves, never lower them.
+        // src/lib keeps the 80% line floor it had when coverage covered only src/lib.
+        thresholds: { statements: 89, branches: 84, functions: 85, lines: 90.9, 'src/lib/**': { lines: 80 } },
       },
     },
   };
