@@ -10,9 +10,15 @@ type Tables = { [K in ModelName]: Map<string, Models[K]['value']> };
 const mapKey = (k: Models[ModelName]['key']) => (typeof k === 'string' ? k : JSON.stringify(k));
 const byDateAsc = (a: Transaction, b: Transaction) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
 
-/** IndexedDB stores meta as one entry per key, so undefined values are simply absent. */
-const cleanMeta = (m: Meta): Meta =>
-  structuredClone(Object.fromEntries(Object.entries(m).filter(([, v]) => v !== undefined)));
+/** Write each key of `patch` into a copy of `meta`, deleting keys set to undefined, as IndexedDB stores them. */
+function patchMeta(meta: Meta, patch: Partial<Meta>): Meta {
+  const out: Record<string, unknown> = { ...meta };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) delete out[k];
+    else out[k] = structuredClone(v);
+  }
+  return out;
+}
 
 const emptyTables = (): Tables => ({
   accounts: new Map(), transactions: new Map(), categories: new Map(),
@@ -58,7 +64,6 @@ export function createMemoryRepository(): Repository {
     balanceSnapshots: store('balanceSnapshots'),
     meta: {
       get: async () => structuredClone(meta),
-      set: async (m) => { meta = cleanMeta(m); },
     },
     async readAll() {
       const records = Object.fromEntries(
@@ -77,8 +82,9 @@ export function createMemoryRepository(): Repository {
         for (const k of changes.delete?.[name] ?? []) table.delete(mapKey(k));
         for (const v of changes.put?.[name] ?? []) table.set(mapKey(key(v)), structuredClone(v));
       }
-      meta = changes.meta ? cleanMeta(changes.meta) : changes.clear ? {} : meta;
+      const nextMeta = patchMeta(changes.clear ? {} : meta, changes.meta ?? {});
       tables = next;
+      meta = nextMeta;
       return true;
     },
     close() {},

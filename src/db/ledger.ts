@@ -35,18 +35,28 @@ function inLedgerOrder(records: LedgerRecords, order: Meta['order'] = {}): Ledge
   return out;
 }
 
-/** The writes that turn `prev` into `next`. Without `prev` everything is replaced. */
+/** Meta keys held in the ledger state; compared by reference, as state updates are immutable. */
+const STATE_META = ['lastSync', 'syncs', 'importMappings', 'recurring', 'settings'] as const;
+
+/**
+ * The writes that turn `prev` into `next`. Without `prev` everything is replaced. With it,
+ * meta holds only the keys that changed (plus `version`), so tabs saving different keys
+ * don't overwrite each other.
+ */
 export function diffLedger(next: LedgerState, prev?: LedgerState): LedgerChanges {
   const order = Object.fromEntries(MODEL_NAMES.map((n) => [n, next[n].map((v) => recordId(n, v as never))]));
-  const meta: Meta = {
-    version: SCHEMA_VERSION, lastSync: next.lastSync, syncs: next.syncs, importMappings: next.importMappings,
-    recurring: next.recurring, settings: next.settings, order,
+  const meta: Partial<Meta> = {
+    version: SCHEMA_VERSION,
+    ...Object.fromEntries(STATE_META.filter((k) => !prev || next[k] !== prev[k]).map((k) => [k, next[k]])),
   };
-  if (!prev) return { clear: true, put: Object.fromEntries(MODEL_NAMES.map((n) => [n, next[n]])), meta };
+  if (!prev) return { clear: true, put: Object.fromEntries(MODEL_NAMES.map((n) => [n, next[n]])), meta: { ...meta, order } };
 
   const changes: Required<Pick<LedgerChanges, 'put' | 'delete'>> = { put: {}, delete: {} };
   for (const name of MODEL_NAMES) diffStore(name, next[name], prev[name], changes);
-  return { ...changes, meta };
+  // Order is rebuilt every time, so compare it by content. One key holds every store's order.
+  const reordered = MODEL_NAMES.some((n) => next[n] !== prev[n]
+    && (next[n].length !== prev[n].length || prev[n].some((v, i) => recordId(n, v as never) !== order[n][i])));
+  return { ...changes, meta: reordered ? { ...meta, order } : meta };
 }
 
 /** State updates are immutable, so a record whose reference is unchanged is unchanged. */

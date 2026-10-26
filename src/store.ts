@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  createPersister, demoCounts, loadLedger, openRepository, withoutDemo, type Persister, type Repository,
-  type SaveStatus,
+  DB_NAME, createPersister, demoCounts, loadLedger, openRepository, readLedger, withoutDemo, type OpenOptions,
+  type Persister, type Repository, type SaveStatus,
 } from './db';
 import { restoreBackup, type Backup, type RestoreMode } from './db/backup';
 import { renameAccount, setAccountHidden } from './lib/accounts';
@@ -27,14 +27,19 @@ export type { LedgerState };
 /**
  * The ledger, loaded asynchronously from the repository (IndexedDB by default). `state` is
  * an empty placeholder while `loading`; afterwards every change is persisted in the
- * background, debounced and diffed against the last save.
+ * background, debounced and diffed against the last save. Other tabs are told of each save over a
+ * BroadcastChannel and read the ledger again.
  */
-export function useLedger(open: () => Promise<Repository> = openRepository) {
+export function useLedger(open: (options: OpenOptions) => Promise<Repository> = openRepository) {
   const [state, setState] = useState<LedgerState>(emptyLedger);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   /** Why the last save failed; kept until a save succeeds, so it survives retries and new edits. */
   const [saveError, setSaveError] = useState<string | null>(null);
+  /** Opening waits for older tabs to close so the database can be upgraded. */
+  const [blocked, setBlocked] = useState(false);
+  /** Another tab upgraded the database; this tab's connection is closed and it must reload. */
+  const [stale, setStale] = useState(false);
   const latest = useRef(state);
   const persister = useRef<Persister | undefined>(undefined);
 
@@ -43,6 +48,10 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
     let repo: Repository | undefined;
     let saver: Persister | undefined;
     let status: SaveStatus = { state: 'saved' };
+    let channel: BroadcastChannel | undefined;
+    let closed = false;
+    /** Another tab saved while this one had unsaved changes; read the ledger again once they are saved. */
+    let behind = false;
     const flush = () => void saver?.flush();
     const onVisibility = () => document.visibilityState === 'hidden' && flush();
     const onStatus = (s: SaveStatus) => {
@@ -50,6 +59,32 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
       if (cancelled) return;
       if (s.state === 'failed') setSaveError(messageOf(s.error));
       else if (s.state === 'saved') setSaveError(null);
+      if (s.state === 'saved' && behind) void refresh();
+    };
+    /**
+     * Show what another tab stored. Unsaved changes here are saved first (on top of the other
+     * tab's, record by record and meta key by meta key) rather than dropped, then this runs again.
+     */
+    async function refresh() {
+      if (cancelled || closed || !repo || !saver) return;
+      if (status.state !== 'saved') return void (behind = true);
+      behind = false;
+      const base = latest.current;
+      const loaded = await readLedger(repo);
+      if (cancelled || closed || !loaded) return;
+      // Edited while reading: the edit's save brings us back here.
+      if (latest.current !== base || status.state !== 'saved') return void (behind = true);
+      saver.reset(loaded);
+      latest.current = loaded;
+      setState(loaded);
+    }
+    const options: OpenOptions = {
+      onBlocked: () => setBlocked(true),
+      onBlocking() {
+        closed = true;
+        setStale(true);
+        return saver?.flush();
+      },
     };
     /** Unsaved changes are only in memory: ask before the tab closes, and try once more to save them. */
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -60,10 +95,16 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
     };
 
     (async () => {
-      repo = await open();
+      repo = await open(options);
+      setBlocked(false);
       const loaded = !cancelled && (await loadLedger(repo));
       if (cancelled || !loaded) return repo.close();
-      saver = persister.current = createPersister(repo, loaded, undefined, undefined, onStatus);
+      if (typeof BroadcastChannel !== 'undefined') {
+        channel = new BroadcastChannel(DB_NAME);
+        channel.onmessage = () => void refresh().catch(console.error);
+      }
+      const onSaved = () => channel?.postMessage({ type: 'changed' });
+      saver = persister.current = createPersister(repo, loaded, undefined, undefined, onStatus, onSaved);
       latest.current = loaded;
       setState(loaded);
       setLoading(false);
@@ -83,8 +124,13 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
       removeEventListener('beforeunload', onBeforeUnload);
       document.removeEventListener('visibilitychange', onVisibility);
       if (persister.current === saver) persister.current = undefined;
-      const r = repo;
-      if (saver && r) void saver.flush().then(() => r.close());
+      // The last save is still announced; the load closes the repository itself if it is not done.
+      if (saver) {
+        void saver.flush().then(() => {
+          channel?.close();
+          repo?.close();
+        });
+      }
     };
   }, [open]);
 
@@ -269,7 +315,7 @@ export function useLedger(open: () => Promise<Repository> = openRepository) {
   const reset = useCallback(() => replaceAll(emptyLedger(), 'Local data could not be erased; nothing was changed.'), [replaceAll]);
 
   return {
-    state, loading, error, saveError, retrySave, runSync, clearDemo, setCategory, setAlways, setReviewed, editTransaction: editTx, setBudget, setRollover, renameAccount: renameAcct,
+    state, loading, error, saveError, blocked, stale, retrySave, runSync, clearDemo, setCategory, setAlways, setReviewed, editTransaction: editTx, setBudget, setRollover, renameAccount: renameAcct,
     setAccountHidden: setHidden, addCategory, updateCategory, deleteCategory, saveRule, deleteRule, moveRule, applyRules,
     setRecurring, addRecurring, removeRecurring, setSettings, importBackup, reset,
   };

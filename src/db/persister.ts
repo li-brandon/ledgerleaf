@@ -20,6 +20,11 @@ export interface Persister {
   commit(state: LedgerState): Promise<void>;
   /** After a failed save, write the latest state again now; otherwise the same as {@link flush}. */
   retry(): Promise<void>;
+  /**
+   * Adopt `state`, just read back from the repository (e.g. after another tab wrote), as both
+   * stored and newest, so it is not written again. Only call while everything is saved.
+   */
+  reset(state: LedgerState): void;
 }
 
 const errorOf = (s: SaveStatus) => (s.state === 'failed' ? s.error : undefined);
@@ -31,7 +36,7 @@ const errorOf = (s: SaveStatus) => (s.state === 'failed' ? s.error : undefined);
  */
 export function createPersister(
   repo: Repository, saved: LedgerState, delay = 250, onError: (e: unknown) => void = console.error,
-  onStatus: (status: SaveStatus) => void = () => {},
+  onStatus: (status: SaveStatus) => void = () => {}, onSaved: () => void = () => {},
 ): Persister {
   let pending: LedgerState | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -64,6 +69,7 @@ export function createPersister(
       await saveLedger(repo, next, saved);
       saved = next;
       failure = undefined;
+      onSaved();
     }).finally(() => {
       writes--;
     });
@@ -110,6 +116,14 @@ export function createPersister(
     retry() {
       if (idle()) pending = latest;
       return flush();
+    },
+    reset(state) {
+      clearTimeout(timer);
+      timer = undefined;
+      pending = undefined;
+      saved = latest = state;
+      failure = undefined;
+      report();
     },
   };
 }

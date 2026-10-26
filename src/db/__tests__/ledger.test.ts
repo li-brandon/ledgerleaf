@@ -52,9 +52,22 @@ describe('diffLedger', () => {
     expect(d.delete).toEqual({ transactions: [first.id], balanceSnapshots: [['acc-1', '2026-10-01']] });
   });
 
-  it('writes nothing but meta when nothing changed', () => {
+  it('writes nothing but the version when nothing changed', () => {
     const s = sample();
-    expect(diffLedger(s, s)).toMatchObject({ put: {}, delete: {}, meta: { version: 2, lastSync: s.lastSync } });
+    expect(diffLedger(s, s)).toEqual({ put: {}, delete: {}, meta: { version: 2 } });
+    // A rebuilt store in the same order leaves the order alone.
+    expect(diffLedger({ ...s, transactions: [...s.transactions] }, s).meta).toEqual({ version: 2 });
+  });
+
+  it('writes only the meta keys that changed, and undefined to delete one', () => {
+    const prev = sample();
+    const next = { ...prev, settings: { currency: 'EUR', monthStartDay: 1, theme: 'dark' as const }, lastSync: undefined };
+    const d = diffLedger(next, prev);
+    expect(d.meta).toEqual({ version: 2, settings: next.settings, lastSync: undefined });
+    expect(d.meta).toHaveProperty('lastSync');
+
+    const reordered = { ...prev, rules: [...prev.rules, { id: 'r2', merchant: 'x', categoryId: 'dining' }] };
+    expect(diffLedger(reordered, prev).meta).toEqual({ version: 2, order: expect.objectContaining({ rules: ['"r1"', '"r2"'] }) });
   });
 });
 
