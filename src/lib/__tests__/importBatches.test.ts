@@ -326,6 +326,21 @@ describe('undoImport', () => {
       expect(meaningful(undoImport(b.state, b.id))).toEqual(meaningful(restored));
     });
 
+    it('drops the claims on rows a merged backup holds untagged, so no undo deletes them', async () => {
+      const old = makeBackup(await importUntagged(emptyLedger(MONTH), FILE, everyday));
+      const a = await importCsv(emptyLedger(MONTH), FILE, everyday);
+      const b = await importCsv(a.state, MORE, everyday, DAY2);
+      const merged = restoreBackup(b.state, (parseBackup(JSON.stringify(old)) as { backup: Backup }).backup, 'merge').state;
+      const descriptions = (s: LedgerState) => s.transactions.map((t) => t.description).sort();
+      expect(merged.transactions.filter((t) => t.importBatchIds).map((t) => [t.description, t.importBatchIds]))
+        .toEqual([['Hardware', [b.id]], ['Bakery', [b.id]]]);
+      expect(batchTransactionCount(merged, a.id)).toBe(0);
+      expect(batchTransactionCount(merged, b.id)).toBe(2);
+
+      expect(descriptions(undoImport(merged, a.id))).toEqual(descriptions(merged));
+      expect(descriptions(undoImport(merged, b.id))).toEqual(['Corner Grocer', 'Kibble Barn', 'Paycheck']);
+    });
+
     it('never deletes a row no import claims', async () => {
       const a = await importCsv(emptyLedger(MONTH), FILE, everyday);
       const untagged = { ...a.state, transactions: a.state.transactions.map((t) => (t.description === 'Paycheck' ? { ...t, importBatchIds: undefined } : t)) };

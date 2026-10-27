@@ -119,7 +119,8 @@ function shiftSnapshots(state: LedgerState, t: Transaction, sign: 1 | -1): Ledge
 
 /**
  * Undo {@link deleteTransaction} of `t`: forget its tombstone and put it back as it was, in date
- * order. Claims of import batches undone since the delete are dropped; when every import that
+ * order. Imports that skipped it as deleted since (see `recordImport`) claim it too, unless no
+ * import claimed it. Claims of import batches undone since the delete are dropped; when every import that
  * claimed it has been undone (which would have removed it), or its account is gone, it stays
  * deleted. Against the current ledger, so it is a no-op if the row is already back.
  */
@@ -130,12 +131,14 @@ export function restoreTransaction(state: LedgerState, t: Transaction): LedgerSt
   const next = kept.length === deleted.length ? state : { ...state, deletedTransactions: kept.length ? kept : undefined };
 
   const batches = new Set(state.importBatches?.map((b) => b.id));
-  const claims = t.importBatchIds?.filter((id) => batches.has(id)) ?? [];
+  const skipped = t.importBatchIds?.length ? deleted.find((d) => dedupeKey(d) === key)?.importBatchIds ?? [] : [];
+  const claims = [...new Set([...t.importBatchIds ?? [], ...skipped])].filter((id) => batches.has(id));
   const held = state.transactions.some((x) => x.id === t.id || dedupeKey(x) === key);
   const undone = !!t.importBatchIds?.length && !claims.length;
   if (held || undone || !state.accounts.some((a) => a.id === t.accountId)) return next;
 
-  const row = claims.length === (t.importBatchIds?.length ?? 0) ? t : { ...t, importBatchIds: claims };
+  const same = claims.length === (t.importBatchIds?.length ?? 0) && claims.every((id, i) => id === t.importBatchIds![i]);
+  const row = same ? t : { ...t, importBatchIds: claims };
   const transactions = [...next.transactions];
   const at = transactions.findIndex((x) => x.date < t.date);
   transactions.splice(at < 0 ? transactions.length : at, 0, row);

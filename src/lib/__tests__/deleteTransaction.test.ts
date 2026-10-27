@@ -32,7 +32,7 @@ async function importCsv(state: LedgerState, text: string, now = DAY1) {
   });
   const id = newBatchId();
   const sync = applySync(state, p.id, await fetchSync(p, state), now);
-  const fileIds = (await p.fetchTransactions()).map((t) => t.id);
+  const fileIds = [...(await p.fetchTransactions()).map((t) => t.id), ...p.deletedIds];
   const next = recordImport(withImportMapping(sync.state, everyday.id, mapping), state, {
     id, file: 'bank.csv', accountId: everyday.id, rows: readCsvTable(text).rows.length, at: now.toISOString(),
   }, fileIds);
@@ -257,6 +257,8 @@ describe('persisting tombstones', () => {
       deletedTransactions: [{ ...good, notes: 'gone', extra: 1 }, { id: 'csv-2', accountId: 'a' }, { ...good, amount: Number.NaN }, 'x', null],
     });
     expect(out.deletedTransactions).toEqual([good]);
+    const claimed = migrate({ version: 2, deletedTransactions: [{ ...good, importBatchIds: ['imp-1', 2, ''] }, { ...good, importBatchIds: [] }] });
+    expect(claimed.deletedTransactions).toEqual([{ ...good, importBatchIds: ['imp-1'] }, good]);
     expect(migrate({ version: 2, deletedTransactions: 'nope' })).not.toHaveProperty('deletedTransactions');
   });
 });
@@ -266,6 +268,13 @@ describe('balance snapshots of an account whose balance comes from its transacti
   async function demo() {
     const p = new MockProvider(DAY1);
     return applySync(emptyLedger('2026-10'), p.id, await fetchSync(p, emptyLedger('2026-10')), DAY1).state;
+  }
+  /** Demo data and FILE imported as before batches were recorded: through the sync pipeline only, rows left untagged. */
+  async function untaggedImport() {
+    const mapping = detectMapping(readCsvTable(FILE).headers);
+    const base = await demo();
+    const p = new CsvImportProvider(FILE, { mapping, accountId: everyday.id, newAccount: everyday });
+    return applySync(base, p.id, await fetchSync(p, base), DAY1).state;
   }
   const hero = (s: LedgerState) => netWorth(s.accounts, s.transactions).netWorth;
   const trend = (s: LedgerState) => netWorthTrend(s.accounts, s.balanceSnapshots, '2026-10', 12).at(-1)?.total;
@@ -339,6 +348,74 @@ describe('balance snapshots of an account whose balance comes from its transacti
     expectConsistent(deleted);
   });
 
+  it('drop a row only an older import claims from the snapshot a newer import wrote', async () => {
+    const a = await importCsv(await demo(), FILE);
+    const b = await importCsv(a.state, 'Date,Description,Amount\n2026-10-21,Bakery,-6.50', DAY2);
+    const paycheck = find(b.state, 'Paycheck')!;
+    const deleted = deleteTransaction(b.state, paycheck.id);
+    expect(latest(deleted)).toBe(-78.6);
+    expectConsistent(deleted);
+    expectConsistent(restoreTransaction(deleted, paycheck));
+  });
+
+  it('count a row claimed by an import whose record is gone as older than every remaining import', async () => {
+    const a = await importCsv(await demo(), FILE);
+    const b = await importCsv(a.state, 'Date,Description,Amount\n2026-10-21,Bakery,-6.50', DAY2);
+    const lost = { ...b.state, importBatches: b.state.importBatches!.filter((x) => x.id !== a.id) };
+    const deleted = deleteTransaction(lost, find(lost, 'Paycheck')!.id);
+    expect(latest(deleted)).toBe(-78.6);
+    expectConsistent(deleted);
+  });
+
+  it('leave a snapshot written before imports were recorded alone when deleting a row an import added', async () => {
+    const untagged = await untaggedImport();
+    const { state } = await importCsv(untagged, 'Date,Description,Amount\n2026-10-15,Bakery,-6.50', DAY2);
+    const deleted = deleteTransaction(state, find(state, 'Bakery')!.id);
+    const mine = (s: LedgerState) => s.balanceSnapshots.filter((x) => x.accountId === everyday.id).map((x) => [x.date, x.balance]);
+    expect(mine(state)).toEqual([['2026-10-20', 2427.9], ['2026-10-21', 2421.4]]);
+    expect(mine(deleted)).toEqual([['2026-10-20', 2427.9], ['2026-10-21', 2427.9]]);
+    expectConsistent(deleted);
+  });
+
+  it('leave a snapshot another sync rewrote since the import alone, and undoing the import still does', async () => {
+    const base = await demo();
+    const { state, id } = await importCsv({ ...base, accounts: [...base.accounts, everyday] }, FILE);
+    const rewritten = { ...state, balanceSnapshots: state.balanceSnapshots.map((x) => (x.accountId === everyday.id ? { ...x, balance: 999 } : x)) };
+    const deleted = deleteTransaction(rewritten, find(state, 'Paycheck')!.id);
+    expect(latest(deleted)).toBe(999);
+    expect(latest(undoImport(deleted, id))).toBe(999);
+  });
+
+  it('a row another import skipped as deleted comes back with its claim, so undoing the first import keeps it (two tabs)', async () => {
+    const a = await importCsv(await demo(), FILE);
+    const t = grocer(a.state);
+    const b = await importCsv(deleteTransaction(a.state, t.id), FILE, DAY2);
+    expect(b.deleted).toBe(1);
+    const restored = restoreTransaction(b.state, t);
+    expect(grocer(restored).importBatchIds).toEqual([a.id, b.id]);
+    expectConsistent(restored);
+    const undone = undoImport(restored, a.id);
+    expect(grocer(undone).importBatchIds).toEqual([b.id]);
+    expectConsistent(undone);
+    expect(find(undoImport(undone, b.id), 'Corner Grocer')).toBeUndefined();
+
+    // Undoing the first import before the delete is undone: the row still comes back, claimed by the other one.
+    const late = restoreTransaction(undoImport(b.state, a.id), t);
+    expect(grocer(late).importBatchIds).toEqual([b.id]);
+    expectConsistent(late);
+  });
+
+  it('a row no import claimed comes back unclaimed, even if an import skipped it as deleted', async () => {
+    const untagged = await untaggedImport();
+    const t = grocer(untagged);
+    const b = await importCsv(deleteTransaction(untagged, t.id), FILE, DAY2);
+    expect(b.deleted).toBe(1);
+    const restored = restoreTransaction(b.state, t);
+    expect(grocer(restored)).toBe(t);
+    expectConsistent(restored);
+    expect(grocer(undoImport(restored, b.id))).toBe(t);
+  });
+
   it('without an import record, change only the snapshots dated on or after the row', () => {
     const t: Transaction = { id: 'x', date: '2026-10-13', description: 'X', amount: -10, category: 'Other', accountId: everyday.id };
     const state: LedgerState = {
@@ -350,10 +427,7 @@ describe('balance snapshots of an account whose balance comes from its transacti
 
   it('adjust the value from before an import, so undoing it hands back a snapshot without the row', async () => {
     // An import from before batches were recorded, then a recorded one the same day.
-    const mapping = detectMapping(readCsvTable(FILE).headers);
-    const base = await demo();
-    const p = new CsvImportProvider(FILE, { mapping, accountId: everyday.id, newAccount: everyday });
-    const untagged = applySync(base, p.id, await fetchSync(p, base), DAY1).state;
+    const untagged = await untaggedImport();
     const { state, id } = await importCsv(untagged, MORE);
     expect(state.importBatches?.[0].snapshots?.[0].before?.balance).toBe(2427.9);
     const deleted = deleteTransaction(state, find(state, 'Paycheck')!.id);
