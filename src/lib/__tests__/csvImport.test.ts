@@ -495,6 +495,31 @@ describe('opposite-sign duplicates', () => {
     expect(teaAmounts(b.state)).toEqual([-5, 5]);
   });
 
+  it('gives each new row an id no other new row takes, so two refunds of a stored charge are both imported', async () => {
+    const a = await importCsv(emptyLedger('2026-10'), charge, { mapping });
+    const b = await importCsv(a.state, 'Date,Description,Amount\n2026-10-01,Tea,5\n2026-10-01,Tea,5\n2026-10-01,Tea,-5', { mapping });
+    expect(b).toMatchObject({ added: 2, updated: 0 });
+    expect(b.provider.oppositeSign).toBe(0);
+    expect(teaAmounts(b.state)).toEqual([-5, 5, 5]);
+    expect(new Set(b.state.transactions.map((t) => t.externalId)).size).toBe(3);
+  });
+
+  it('matches a stored transaction whatever the case of the description', async () => {
+    const a = await importCsv(emptyLedger('2026-10'), charge, { mapping });
+    const b = await importCsv(a.state, 'Date,Description,Amount\n2026-10-01,TEA,-5', { mapping });
+    expect(b).toMatchObject({ added: 0, received: 1 });
+    expect(b.state.transactions.map((t) => [t.description, t.amount])).toEqual([['TEA', -5]]);
+  });
+
+  it('flags every row of a file imported again with flip signs toggled, a charge and its refund too', async () => {
+    const file = `${chargeThenRefund}\n2026-10-02,Cake,-3`;
+    const a = await importCsv(emptyLedger('2026-10'), file, { mapping });
+    const b = await importCsv(a.state, file, { mapping: flip });
+    expect(b.provider.oppositeSign).toBe(3);
+    expect(b).toMatchObject({ added: 0, updated: 0, received: 0 });
+    expect(b.state.transactions.map((t) => [t.description, t.amount])).toEqual(a.state.transactions.map((t) => [t.description, t.amount]));
+  });
+
   describe('transactions stored under the signed ids imports made before', () => {
     /** The ids imports used to give: a hash of the signed amount, for rows that occur once. */
     const signedId = (t: Transaction) => hashId(`${[t.date, t.description.toLowerCase(), t.amount.toFixed(2), t.accountId].join('|')}#0`);

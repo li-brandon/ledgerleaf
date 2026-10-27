@@ -288,6 +288,8 @@ export interface ExistingMatch {
   oppositeSign: Set<Transaction>;
   /** Rows that match a transaction the user deleted; they are left out of `transactions`. */
   deleted: Set<Transaction>;
+  /** The ids of the deleted transactions those rows match. */
+  deletedIds: string[];
 }
 
 /**
@@ -297,7 +299,9 @@ export interface ExistingMatch {
  * Within each group of equal content, rows first pair one-to-one in file order with stored
  * transactions of the same sign, then the remaining rows with the remaining ones of the opposite
  * sign: those are opposite-sign duplicates (importing one would overwrite the stored amount's
- * sign), so they are left out. Zero amounts only pair with zero. Transactions the user deleted
+ * sign), so they are left out. When more of the file's rows can pair by opposite sign than by the
+ * same sign, the file looks flipped and opposite signs pair first, so every flipped row is flagged,
+ * a charge and its same-day refund too. Zero amounts only pair with zero. Transactions the user deleted
  * (`deleted`) pair like stored ones, after them; rows paired with one are left out, and new rows
  * never take a deleted one's id.
  */
@@ -316,25 +320,37 @@ export function matchExisting(
     if (t.externalId) taken.add(idKey(t.accountId, t.externalId));
   }
   const sameSign = (a: DeletedTransaction, b: DeletedTransaction) => Math.sign(a.amount) === Math.sign(b.amount);
-  const match = new Map<Transaction, DeletedTransaction>();
-  const claimed = new Set<DeletedTransaction>();
-  for (const same of [true, false]) {
-    for (const t of rows) {
-      if (match.has(t)) continue;
-      const m = stored.get(group(t))?.find((s) => !claimed.has(s) && sameSign(s, t) === same);
-      if (m) {
-        match.set(t, m);
-        claimed.add(m);
+  const pair = (order: boolean[]) => {
+    const match = new Map<Transaction, DeletedTransaction>();
+    const claimed = new Set<DeletedTransaction>();
+    for (const same of order) {
+      for (const t of rows) {
+        if (match.has(t)) continue;
+        const m = stored.get(group(t))?.find((s) => !claimed.has(s) && sameSign(s, t) === same);
+        if (m) {
+          match.set(t, m);
+          claimed.add(m);
+        }
       }
     }
-  }
+    return match;
+  };
+  const pairs = (m: Map<Transaction, DeletedTransaction>, same: boolean) => [...m].filter(([t, s]) => sameSign(s, t) === same).length;
+  // Flip signs is set for the whole file: when more of its rows pair with the opposite sign than with the same
+  // one, it looks flipped, so opposite signs pair first and a charge and its refund are flagged too.
+  const sameFirst = pair([true, false]);
+  const flippedFirst = pair([false, true]);
+  const match = pairs(flippedFirst, false) > pairs(sameFirst, true) ? flippedFirst : sameFirst;
   const transactions: Transaction[] = [];
   const oppositeSign = new Set<Transaction>();
   const dropped = new Set<Transaction>();
+  const deletedIds: string[] = [];
   for (const t of rows) {
     const m = match.get(t);
-    if (m && gone.has(m)) dropped.add(t);
-    else if (m && !sameSign(m, t)) oppositeSign.add(t);
+    if (m && gone.has(m)) {
+      dropped.add(t);
+      deletedIds.push(m.id);
+    } else if (m && !sameSign(m, t)) oppositeSign.add(t);
     else if (m) transactions.push(m.id === t.id && m.externalId === t.externalId ? t : { ...t, id: m.id, externalId: m.externalId });
     else {
       let id = t.externalId;
@@ -343,7 +359,7 @@ export function matchExisting(
       transactions.push(id === t.externalId ? t : { ...t, id: `csv-${id}`, externalId: id });
     }
   }
-  return { transactions, oppositeSign, deleted: dropped };
+  return { transactions, oppositeSign, deleted: dropped, deletedIds };
 }
 
 /** The rows that failed, as CSV in the original columns plus a trailing "Error" column. */

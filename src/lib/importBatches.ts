@@ -15,7 +15,8 @@ const snapshotKey = (s: Pick<BalanceSnapshot, 'accountId' | 'date'>) => `${s.acc
  * that some import claims, gets the batch id appended to its `importBatchIds`; so does any
  * transaction the import added under another id. A matched row no import claims (imported before
  * batches were recorded, or restored from an older backup) is never claimed, so no undo deletes
- * it. The batch notes what else the import created or replaced (the
+ * it. A deleted transaction in `fileIds` (one the file had, skipped as deleted) gets the batch id
+ * too, so Undo of the delete gives the row the claim (see `restoreTransaction`). The batch notes what else the import created or replaced (the
  * account, categories, balance snapshots) so {@link undoImport} can take it back. Pure.
  */
 export function recordImport(next: LedgerState, prev: LedgerState, draft: ImportDraft, fileIds: Iterable<string>): LedgerState {
@@ -41,7 +42,9 @@ export function recordImport(next: LedgerState, prev: LedgerState, draft: Import
     return [{ accountId: s.accountId, date: s.date, balance: s.balance, ...(b && { before: b }) }];
   });
   if (snapshots.length) batch.snapshots = snapshots;
-  return { ...next, transactions, importBatches: [batch, ...(next.importBatches ?? [])] };
+  const deletedTransactions = next.deletedTransactions?.map((d) =>
+    (inFile.has(d.id) ? { ...d, importBatchIds: [...(d.importBatchIds ?? []), draft.id] } : d));
+  return { ...next, transactions, ...(deletedTransactions && { deletedTransactions }), importBatches: [batch, ...(next.importBatches ?? [])] };
 }
 
 /** The transaction would be deleted by undoing `batchId`: no other batch claims it. */

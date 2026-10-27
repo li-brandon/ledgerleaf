@@ -639,6 +639,9 @@ describe('re-importing a file after deleting one of its rows', () => {
     expect(within(summary).getByText('Added').nextSibling).toHaveTextContent('0');
     expect(within(summary).getByText('Duplicates skipped').nextSibling).toHaveTextContent('2');
     expect(within(summary).getByText('Deleted transactions skipped').nextSibling).toHaveTextContent('1');
-    expect((await stored()).transactions.map((t) => t.description).sort()).toEqual(['Lunch', 'Tea']);
+    const after = await stored();
+    expect(after.transactions.map((t) => t.description).sort()).toEqual(['Lunch', 'Tea']);
+    // The import claims the deleted row too, for when its delete is undone.
+    expect(after.deletedTransactions?.map((d) => [d.description, d.importBatchIds])).toEqual([['Rent', [after.importBatches![0].id]]]);
   });
 });

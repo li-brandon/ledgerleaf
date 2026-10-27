@@ -217,9 +217,12 @@ export interface ImportBatch {
 /**
  * A transaction the user deleted: enough of it to recognise the row when a re-sync (by
  * `source` and `externalId`, see `dedupeKey`) or a re-import of the same CSV file (by content)
- * offers it again, so it is not added back.
+ * offers it again, so it is not added back. `importBatchIds` are the imports that skipped it as
+ * deleted (see `recordImport`); Undo of the delete gives the row their claims too.
  */
-export type DeletedTransaction = Pick<Transaction, 'id' | 'accountId' | 'date' | 'description' | 'amount' | 'source' | 'externalId'>;
+export type DeletedTransaction = Pick<
+  Transaction, 'id' | 'accountId' | 'date' | 'description' | 'amount' | 'source' | 'externalId' | 'importBatchIds'
+>;
 
 export const SCHEMA_VERSION = 2;
 

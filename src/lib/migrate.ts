@@ -62,6 +62,8 @@ function normalizeDeleted(v: unknown): DeletedTransaction[] {
     const out: DeletedTransaction = { id: d.id, accountId: d.accountId, date: d.date, description: d.description, amount: d.amount };
     if (typeof d.source === 'string') out.source = d.source;
     if (typeof d.externalId === 'string') out.externalId = d.externalId;
+    const batchIds = Array.isArray(d.importBatchIds) ? d.importBatchIds.filter((id) => typeof id === 'string' && id) : [];
+    if (batchIds.length) out.importBatchIds = batchIds;
     return [out];
   });
 }

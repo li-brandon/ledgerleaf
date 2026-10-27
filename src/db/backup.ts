@@ -183,7 +183,8 @@ export interface RestoreResult {
  * `merge` keeps everything in `current` and adds backup records whose key (id; account and
  * day for balance history) it lacks; where both have something, `current` wins, settings
  * included. A transaction in both keeps `current`'s record, `importBatchIds` too: claims are not
- * unioned, so undoing a backup's batch never deletes a row `current` did not attribute to it.
+ * unioned, so undoing a backup's batch never deletes a row `current` did not attribute to it. One the
+ * backup holds untagged (it predates the imports that claim it) loses its claims, so no undo deletes it.
  * Deleted-transaction tombstones are unioned, so a backup never brings back a transaction
  * `current` deleted; a backup's tombstone of a transaction `current` holds is dropped. Either way the result is normalized like a freshly loaded ledger.
  */
@@ -195,7 +196,10 @@ export function restoreBackup(current: LedgerState, backup: Backup, mode: Restor
   }
   const deleted = new Set(current.deletedTransactions?.map(dedupeKey));
   const incoming = { ...stores, transactions: stores.transactions.filter((t) => !deleted.has(dedupeKey(t))) };
-  const merged = Object.fromEntries(MODEL_NAMES.map((n) => [n, mergeStore(n, current[n], incoming[n])])) as LedgerRecords;
+  // A row the backup holds untagged was there before any import claimed it: drop the claims, so no undo deletes it.
+  const untagged = new Set(stores.transactions.filter((t) => !t.importBatchIds?.length).map((t) => t.id));
+  const kept = { ...current, transactions: current.transactions.map((t) => (untagged.has(t.id) ? { ...t, importBatchIds: undefined } : t)) };
+  const merged = Object.fromEntries(MODEL_NAMES.map((n) => [n, mergeStore(n, kept[n], incoming[n])])) as LedgerRecords;
   const added = Object.fromEntries(MODEL_NAMES.map((n) => [n, merged[n].length - current[n].length])) as StoreCounts;
   const lastSync = [current.lastSync, meta.lastSync].filter(Boolean).sort().at(-1);
   const state = normalizeLedger({
